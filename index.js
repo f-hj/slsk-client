@@ -3,6 +3,8 @@ const hex = require('hex')
 
 var client = net.createConnection(2416, 'server.slsknet.org')
 
+var peers = {}
+
 client.on('connect', function() {
   console.log('connect')
   //                      length       code         l user        user                        l pass        pass                      version
@@ -15,7 +17,7 @@ client.on('connect', function() {
     //                      length        code        ticket      l content     content
     let buf2 = Buffer.from('15000000' + '1a000000' + '0de2e116' + '09000000' + '6d6f627920706c6179', 'hex')
 
-    //let buf2 = Buffer.from('1d000000' + '26000000' + '04000000' + '01010101' + '09000000' + '6d6f627920706c6179', 'hex')
+    //let buf2 = Buffer.from('1d000000' + '26000000' + '01010101' + '09000000' + '6d6f627920706c6179', 'hex')
     client.write(buf2)
   }, 2000)
 })
@@ -28,24 +30,24 @@ client.on('data', function(data) {
     data = Buffer.concat([savedData, data])
   }
   // must recover saved datas
-  hex(data)
+  //hex(data)
   let pointer = 0
   while (pointer < data.length) {
-    console.log('pointer: ' + pointer.toString(16) + ' length: ' + data.length.toString(16))
     let oPointer = pointer
     let size = data.readUInt32LE(pointer)
-    console.log('size: ' + size.toString(16))
+    //console.log('pointer: ' + pointer.toString(16) + ' length: ' + data.length.toString(16) + ' size: ' + size.toString(16))
+
+    if (pointer + size > data.length) {
+      //save data after pointer
+      //console.log('save datas')
+      //savedData = data.slice(pointer, data.length)
+      break
+    }
 
     if (size == 0) {
       pointer += 4
       continue
     }
-
-    /*if (size > data.length) {
-      //save data after pointer
-      savedData = data.slice(pointer, data.length)
-      break
-    }*/
 
     pointer += 4
     if (data.readUInt32LE(pointer) == 18) {
@@ -58,11 +60,33 @@ client.on('data', function(data) {
       for (let i = 0 ; i < 4 ; i++) {
         ip.push(data.readUInt8(pointer + i))
       }
-      console.log('ConnectToPeer ' + username + ' ' + type + ' ' + ip[0] + '.' + ip[1] + '.' + ip[2] + '.' + ip[3])
+      pointer += 4
+      let port = data.readUInt32LE(pointer)
+      pointer += 4
+      let token = data.toString('hex', pointer, pointer + 4)
+      //let token = data.readUInt32LE(pointer)
+      console.log('ConnectToPeer ' + username + ' ' + type + ' ' + ip[0] + '.' + ip[1] + '.' + ip[2] + '.' + ip[3] + ':' + port + ' ' + token)
+
+      //do this async for next times
+      let conn = net.createConnection(port, ip[0] + '.' + ip[1] + '.' + ip[2] + '.' + ip[3])
+      peers[username] = conn
+
+      conn.on('connect', () => {
+        let buf = Buffer.from('05' + '00000000' + token, 'hex')
+      })
+
+      conn.on('data', d => {
+        console.log(username)
+        hex(d)
+      })
+
+      conn.on('error', err => {
+        //console.log(err)
+      })
     }
 
-    console.log()
-    console.log()
+    //console.log()
+    //console.log()
     pointer = oPointer + size + 4
   }
 })
