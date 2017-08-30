@@ -1,9 +1,22 @@
+//internal
 const net = require('net')
+const zlib = require('zlib')
+
+//external
 const hex = require('hex')
 
-var client = net.createConnection(2416, 'server.slsknet.org')
+var client = net.createConnection({
+  host: 'server.slsknet.org',
+  port: 2242
+})
 
-var peers = {}
+// TODO upnp port for client connect
+/*var server = net.createServer()
+server.listen(54792, () => {
+  console.log('server bound');
+});*/
+
+var peers = []
 
 client.on('connect', function() {
   console.log('connect')
@@ -12,6 +25,9 @@ client.on('connect', function() {
   // l hash     hash                                                                  version
   '20000000' + '3334326566663061366637323062623335666139643366643264666162303163' + '11000000' + '08000000' + '02000000' + 'ba080000', 'hex')
   client.write(buf)
+  //console.log('port')
+  //let bufPort = Buffer.from('0c000000' + '02000000' + '08da0000')
+  //client.write(bufPort)
   setTimeout(() => {
     console.log('search')
     //                      length        code        ticket      l content     content
@@ -34,6 +50,10 @@ client.on('data', function(data) {
   let pointer = 0
   while (pointer < data.length) {
     let oPointer = pointer
+    if (pointer + 4 > data.length) {
+      pointer += 4
+      break
+    }
     let size = data.readUInt32LE(pointer)
     //console.log('pointer: ' + pointer.toString(16) + ' length: ' + data.length.toString(16) + ' size: ' + size.toString(16))
 
@@ -41,6 +61,7 @@ client.on('data', function(data) {
       //save data after pointer
       //console.log('save datas')
       //savedData = data.slice(pointer, data.length)
+      pointer += 4
       break
     }
 
@@ -60,28 +81,73 @@ client.on('data', function(data) {
       for (let i = 0 ; i < 4 ; i++) {
         ip.push(data.readUInt8(pointer + i))
       }
+
+      // What the fuck Soulseek? Why this shiet is revert? I lost 2 days on this!
+      let host = ip[3] + '.' + ip[2] + '.' + ip[1] + '.' + ip[0]
+
       pointer += 4
       let port = data.readUInt32LE(pointer)
       pointer += 4
       let token = data.toString('hex', pointer, pointer + 4)
       //let token = data.readUInt32LE(pointer)
-      console.log('ConnectToPeer ' + username + ' ' + type + ' ' + ip[0] + '.' + ip[1] + '.' + ip[2] + '.' + ip[3] + ':' + port + ' ' + token)
+      console.log('ConnectToPeer ' + username + ' ' + type + ' ' + host + ':' + port + ' ' + token)
 
       //do this async for next times
-      let conn = net.createConnection(port, ip[0] + '.' + ip[1] + '.' + ip[2] + '.' + ip[3])
-      peers[username] = conn
-
-      conn.on('connect', () => {
+      let conn = net.createConnection({
+        host,
+        port
+      }, () => {
+        console.log('Connected to ' + username)
         let buf = Buffer.from('05' + '00000000' + token, 'hex')
+        conn.write(buf)
+      })
+
+      peers.push({
+        username,
+        conn,
+        token,
+        host,
+        port
       })
 
       conn.on('data', d => {
         console.log(username)
-        hex(d)
+        //hex(d)
+        let p = 0
+        let ps = d.readUInt32LE(p)
+        p += 4
+        let code = d.readUInt32LE(p)
+        p += 4
+        console.log(ps)
+        console.log(code)
+        console.log('length: ' + data.length.toString(16) + ' size: ' + ps.toString(16))
+        if (code === 9) {
+          console.log('FileSearchResult')
+          //from p to ps + 4
+          let content = d.slice(p, ps + 4)
+          hex(content)
+          zlib.unzip(content, (err, buffer) => {
+            if (!err) {
+              hex(buffer)
+              //console.log(buffer.toString());
+            } else {
+              console.log(err)
+            }
+          });
+        }
       })
 
       conn.on('error', err => {
+        console.log('Error to ' + username + ' ' + err.code)
         //console.log(err)
+      })
+
+      conn.on('end', () => {
+        console.log('Ending ' + username)
+      })
+
+      conn.on('timeout', () => {
+        console.log('Timeout ' + username)
       })
     }
 
