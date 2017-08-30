@@ -125,11 +125,36 @@ client.on('data', function(data) {
           console.log('FileSearchResult')
           //from p to ps + 4
           let content = d.slice(p, ps + 4)
-          hex(content)
+          //hex(content)
           zlib.unzip(content, (err, buffer) => {
             if (!err) {
               hex(buffer)
-              //console.log(buffer.toString());
+              let zpoint = 0
+
+              let zuser = buffer.toString('utf8', zpoint + 4, zpoint + 4 + buffer.readUInt32LE(zpoint))
+              zpoint += 4 + zuser.length
+              let token = buffer.readUInt32LE(zpoint)
+              zpoint += 4
+              let nbFiles = buffer.readUInt32LE(zpoint)
+              zpoint += 4
+              console.log('Files: ' + nbFiles)
+              for (var i = 0; i < nbFiles; i++) {
+                let code = buffer.readUInt8(zpoint)
+                zpoint += 1
+                let filename = buffer.toString('utf8', zpoint + 4, zpoint + 4 + buffer.readUInt32LE(zpoint))
+                zpoint += 4 + filename.length
+                let fileSize = buffer.readUInt32LE(zpoint)
+                zpoint += 4
+                let fileSize2 = buffer.readUInt32LE(zpoint)
+                zpoint += 4
+                let ext = buffer.toString('utf8', zpoint + 4, zpoint + 4 + buffer.readUInt32LE(zpoint))
+                zpoint += 4 + ext.length
+                let nbAttrib = buffer.readUInt32LE(zpoint)
+                zpoint += 4
+                //we don't care about attributes
+                zpoint += nbAttrib * 8
+                console.log('    File: ' + filename + ' size: ' + fileSize + ' ext: ' + ext + ' nbAttrib: ' + nbAttrib)
+              }
             } else {
               console.log(err)
             }
