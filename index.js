@@ -21,7 +21,7 @@ var peers = []
 client.on('connect', function() {
   console.log('connect')
   //                      length       code         l user        user                        l pass        pass                      version
-  let buf = Buffer.from('4f000000' + '01000000' + '0c000000' + '49416d576562536572766572' + '0b000000' + '' + '9d000000' +
+  let buf = Buffer.from('4f000000' + '01000000' + '0c000000' + '49416d576562536572766572' + '0b000000' + '49416d50617373776f7264' + '9d000000' +
   // l hash     hash                                                                  version
   '20000000' + '3334326566663061366637323062623335666139643366643264666162303163' + '11000000' + '08000000' + '02000000' + 'ba080000', 'hex')
   client.write(buf)
@@ -72,11 +72,16 @@ client.on('data', function(data) {
 
     pointer += 4
     if (data.readUInt32LE(pointer) == 18) {
+      hex(data)
       pointer += 4
-      let username = data.toString('utf8', pointer + 4, pointer + 4 + data.readUInt32LE(pointer))
-      pointer += 4 + username.length
-      let type = data.toString('utf8', pointer + 4, pointer + 4 + data.readUInt32LE(pointer))
-      pointer += 4 + type.length
+      let sUsername = data.readUInt32LE(pointer)
+      pointer += 4
+      let username = data.toString('utf8', pointer, pointer + sUsername)
+      pointer += sUsername
+      let sType = data.readUInt32LE(pointer)
+      pointer += 4
+      let type = data.toString('utf8', pointer, pointer + sType)
+      pointer += sType
       let ip = []
       for (let i = 0 ; i < 4 ; i++) {
         ip.push(data.readUInt8(pointer + i))
@@ -131,8 +136,10 @@ client.on('data', function(data) {
               hex(buffer)
               let zpoint = 0
 
-              let zuser = buffer.toString('utf8', zpoint + 4, zpoint + 4 + buffer.readUInt32LE(zpoint))
-              zpoint += 4 + zuser.length
+              let szUser = buffer.readUInt32LE(zpoint)
+              zpoint += 4
+              let zuser = buffer.toString('utf8', zpoint, zpoint + szUser)
+              zpoint += szUser
               let token = buffer.readUInt32LE(zpoint)
               zpoint += 4
               let nbFiles = buffer.readUInt32LE(zpoint)
@@ -141,14 +148,18 @@ client.on('data', function(data) {
               for (var i = 0; i < nbFiles; i++) {
                 let code = buffer.readUInt8(zpoint)
                 zpoint += 1
-                let filename = buffer.toString('utf8', zpoint + 4, zpoint + 4 + buffer.readUInt32LE(zpoint))
-                zpoint += 4 + filename.length
+                let sFilename = buffer.readUInt32LE(zpoint)
+                zpoint += 4
+                let filename = buffer.toString('utf8', zpoint, zpoint + sFilename)
+                zpoint += sFilename
                 let fileSize = buffer.readUInt32LE(zpoint)
                 zpoint += 4
                 let fileSize2 = buffer.readUInt32LE(zpoint)
                 zpoint += 4
-                let ext = buffer.toString('utf8', zpoint + 4, zpoint + 4 + buffer.readUInt32LE(zpoint))
-                zpoint += 4 + ext.length
+                let sExt = buffer.readUInt32LE(zpoint)
+                zpoint += 4
+                let ext = buffer.toString('utf8', zpoint, zpoint + sExt)
+                zpoint += sExt
                 let nbAttrib = buffer.readUInt32LE(zpoint)
                 zpoint += 4
                 //we don't care about attributes
