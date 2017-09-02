@@ -18,6 +18,9 @@ server.listen(54792, () => {
 
 var peers = []
 
+let gettingFile = false
+let gettingFileUser
+
 client.on('connect', function() {
   console.log('connect')
   //                      length       code         l user        user                        l pass        pass                      version
@@ -25,9 +28,11 @@ client.on('connect', function() {
   // l hash     hash                                                                  version
   '20000000' + '3334326566663061366637323062623335666139643366643264666162303163' + '11000000' + '08000000' + '02000000' + 'ba080000', 'hex')
   client.write(buf)
-  //console.log('port')
-  //let bufPort = Buffer.from('0c000000' + '02000000' + '08da0000')
-  //client.write(bufPort)
+  /*setTimeout(() => {
+    console.log('port')
+    let bufPort = Buffer.from('08000000' + '02000000' + '08da0000')
+    client.write(bufPort)
+  }, 1000)*/
   setTimeout(() => {
     console.log('search')
     //                      length        code        ticket      l content     content
@@ -72,7 +77,7 @@ client.on('data', function(data) {
 
     pointer += 4
     if (data.readUInt32LE(pointer) == 18) {
-      hex(data)
+      //hex(data)
       pointer += 4
       let sUsername = data.readUInt32LE(pointer)
       pointer += 4
@@ -95,14 +100,14 @@ client.on('data', function(data) {
       pointer += 4
       let token = data.toString('hex', pointer, pointer + 4)
       //let token = data.readUInt32LE(pointer)
-      console.log('ConnectToPeer ' + username + ' ' + type + ' ' + host + ':' + port + ' ' + token)
+      //console.log('ConnectToPeer ' + username + ' ' + type + ' ' + host + ':' + port + ' ' + token)
 
       //do this async for next times
       let conn = net.createConnection({
         host,
         port
       }, () => {
-        console.log('Connected to ' + username)
+        //console.log('Connected to ' + username)
         let buf = Buffer.from('05' + '00000000' + token, 'hex')
         conn.write(buf)
       })
@@ -116,8 +121,9 @@ client.on('data', function(data) {
       })
 
       conn.on('data', d => {
+        if (gettingFile && gettingFileUser !== username) return
         console.log(username)
-        //hex(d)
+        hex(d)
         let p = 0
         let ps = d.readUInt32LE(p)
         p += 4
@@ -165,6 +171,12 @@ client.on('data', function(data) {
                 //we don't care about attributes
                 zpoint += nbAttrib * 8
                 console.log('    File: ' + filename + ' size: ' + fileSize + ' ext: ' + ext + ' nbAttrib: ' + nbAttrib)
+                if (gettingFile) return
+                if (i === 0) {
+                  gettingFile = true
+                  gettingFileUser = username
+                  getFile(username, filename)
+                }
               }
             } else {
               console.log(err)
@@ -174,16 +186,15 @@ client.on('data', function(data) {
       })
 
       conn.on('error', err => {
-        console.log('Error to ' + username + ' ' + err.code)
-        //console.log(err)
+        //console.log('Error to ' + username + ' ' + err.code)
       })
 
       conn.on('end', () => {
-        console.log('Ending ' + username)
+        //console.log('Ending ' + username)
       })
 
       conn.on('timeout', () => {
-        console.log('Timeout ' + username)
+        //console.log('Timeout ' + username)
       })
     }
 
@@ -192,6 +203,25 @@ client.on('data', function(data) {
     pointer = oPointer + size + 4
   }
 })
+
+function getFile(user, file) {
+  console.log(user + ' ' + file)
+  console.log('Search user')
+  peers.forEach(peer => {
+    if (peer.username === user) {
+      console.log('Sending request')
+      let fileHex = Buffer.from(file, 'utf8').toString('hex')
+      //                      length       code         direction    token       l filename    filename
+      let buff = Buffer.from('00000000' + '28000000' + '00000000' + '64000000' + '00000000' + fileHex, 'hex')
+      let fileHexSize = fileHex.length / 2
+      buff.writeUInt32LE(16 + fileHexSize, 0)
+      buff.writeUInt32LE(fileHexSize, 16)
+      hex(buff)
+      console.log()
+      peer.conn.write(buff)
+    }
+  })
+}
 
 //message length  code      content
 //4 bytes         4 bytes   ...
