@@ -2,6 +2,7 @@
 const net = require('net')
 const zlib = require('zlib')
 const fs = require('fs')
+const path = require('path')
 
 //external
 const hex = require('hex')
@@ -198,7 +199,7 @@ client.on('data', function(data) {
             let reason = d.toString('utf8', p, p + sReason)
             console.log('TransferResponse ' + username + ' token: ' + nToken + ' allowed: ' + allowed + ' reason: ' + reason)
             if (reason === 'Queued') {
-              /*setInterval(() => {
+              setInterval(() => {
                 console.log('PlaceInQueueRequest')
                 let fileHex = Buffer.from(gettingFileName, 'utf8').toString('hex')
                 //                      length        code        l filename    filename
@@ -208,11 +209,11 @@ client.on('data', function(data) {
                 bReq.writeUInt32LE(fileHexSize, 8)
                 hex(bReq)
                 conn.write(bReq)
-              }, 5000)*/
+              }, 5000)
             }
           } else {
             console.log('TransferResponse ' + username + ' token: ' + nToken + ' allowed: ' + allowed)
-            // I must send ConnectToPeer with F
+            // I must send ConnectToPeer with F or direct connect with F?
           }
         } else if (code === 40) {
           let dir = d.readUInt32LE(p)
@@ -294,20 +295,31 @@ function downloadFile(user, file, token) {
         conn.write(buf)
       })
 
-      fs.writeFile('t.mp3', '')
 
       let received = false
+      let buf = new Buffer(0)
       conn.on('data', data => {
         if (!received) {
           conn.write(Buffer.from('00000000' + '00000000', 'hex'))
           received = true
         } else {
-          fs.appendFile('t.mp3', data)
+          console.log('data')
+          buf = Buffer.concat([buf, data])
         }
-        hex(data)
+        //hex(data)
+      })
+      conn.on('close', () => {
+        console.log('CLOSED')
+        name = getFilePathName(file)
+        fs.writeFile(name, buf)
       })
     }
   })
+}
+
+function getFilePathName(name) {
+  name = name.split('\\')
+  return name[name.length -1]
 }
 
 //message length  code      content
