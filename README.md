@@ -23,7 +23,8 @@ slsk.connect({
     res = [
       {
         user: 'poulet',
-        file: '@@poulet-music/random.mp3'
+        file: '@@poulet-music/random.mp3',
+        freeUpload: true
       }
     ]
     client.download({
@@ -60,12 +61,19 @@ Return client (see just here ⬇)
 
 ##### callback
 
+|key | value | note |
+|-----|-------|------|
+|user|Peer name of slsk|
+|file|Full path of peer file|
+|freeUpload|Avalaible slots|True if peer have enough slots to get file immediatly|
+
 List of files
 ```json
 [
   {
     "user": "jambon",
-    "file": "@@jambon-slsk/myfile.m4a"
+    "file": "@@jambon-slsk/myfile.m4a",
+    "freeUpload": false
   }
 ]
 ```
@@ -74,3 +82,11 @@ List of files
 Return buffered file
 
 #### downloadFile
+
+## Sources
+
+ftp://ftp.tu-clausthal.de/pub/mirror/ftp.gwdg.de/gnu/ftp/savannah/files/mldonkey/docs/Soulseek/soulseek_protocol.html
+
+https://www.museek-plus.org/wiki/SoulseekProtocol
+
+Nicotine+ software + Wireshark
