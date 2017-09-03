@@ -4,6 +4,8 @@ const crypto = require('crypto')
 const hex = require('hex')
 const debug = require('debug')('slsk')
 
+const Message = require('./message.js')
+
 let client
 let stack = {
   search: {}
@@ -37,7 +39,7 @@ class SlskClient {
     let req = Buffer.from(obj.req, 'utf8').toString('hex')
     let sReq = req.length / 2
     //                      length      code        token   l req       req
-    let buf = Buffer.from('15000000' + '1a000000' + token + '09000000' + req, 'hex')
+    let buf = Buffer.from('15000000' + '1a000000' + token + '00000000' + req, 'hex')
     buf.writeUInt32LE(8 + sReq, 0)
     buf.writeUInt32LE(sReq, 12)
 
