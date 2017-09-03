@@ -1,6 +1,7 @@
 //internal
 const net = require('net')
 const zlib = require('zlib')
+const fs = require('fs')
 
 //external
 const hex = require('hex')
@@ -20,6 +21,7 @@ var peers = []
 
 let gettingFile = false
 let gettingFileUser
+let gettingFileName
 
 client.on('connect', function() {
   console.log('connect')
@@ -102,6 +104,11 @@ client.on('data', function(data) {
       //let token = data.readUInt32LE(pointer)
       //console.log('ConnectToPeer ' + username + ' ' + type + ' ' + host + ':' + port + ' ' + token)
 
+      if (gettingFile && gettingFileUser === username && type == 'F') {
+        downloadFile(gettingFileUser, gettingFileName, token)
+        return
+      }
+
       //do this async for next times
       let conn = net.createConnection({
         host,
@@ -173,8 +180,6 @@ client.on('data', function(data) {
                 console.log('    File: ' + filename + ' size: ' + fileSize + ' ext: ' + ext + ' nbAttrib: ' + nbAttrib)
                 if (gettingFile) return
                 if (i === 0) {
-                  gettingFile = true
-                  gettingFileUser = username
                   getFile(username, filename)
                 }
               }
@@ -182,6 +187,55 @@ client.on('data', function(data) {
               console.log(err)
             }
           });
+        } else if (code === 41) {
+          let nToken = d.toString('hex', p, p + 4)
+          p += 4
+          let allowed = d.readUInt8(p)
+          p += 1
+          if (allowed === 0) {
+            let sReason = d.readUInt32LE(p)
+            p += 4
+            let reason = d.toString('utf8', p, p + sReason)
+            console.log('TransferResponse ' + username + ' token: ' + nToken + ' allowed: ' + allowed + ' reason: ' + reason)
+            if (reason === 'Queued') {
+              /*setInterval(() => {
+                console.log('PlaceInQueueRequest')
+                let fileHex = Buffer.from(gettingFileName, 'utf8').toString('hex')
+                //                      length        code        l filename    filename
+                let bReq = Buffer.from('00000000' + '33000000' + '00000000' + fileHex, 'hex')
+                let fileHexSize = fileHex.length / 2
+                bReq.writeUInt32LE(8 + fileHexSize, 0)
+                bReq.writeUInt32LE(fileHexSize, 8)
+                hex(bReq)
+                conn.write(bReq)
+              }, 5000)*/
+            }
+          } else {
+            console.log('TransferResponse ' + username + ' token: ' + nToken + ' allowed: ' + allowed)
+            // I must send ConnectToPeer with F
+          }
+        } else if (code === 40) {
+          let dir = d.readUInt32LE(p)
+          p += 4
+          let rToken = d.toString('hex', p, p + 4)
+          p += 4
+          let sFile = d.readUInt32LE(p)
+          p += 4
+          let file = d.toString('utf8', p, p + sFile)
+          p += sFile
+          if (dir === 1) {
+            let size = d.readUInt32LE(p)
+            p += 4
+          }
+
+          console.log('TransferRequest ' + username + ' token: ' + token + ' filename: ' + file)
+          if (username === gettingFileUser && file === gettingFileName) {
+            console.log('TransferResponse')
+            let b = Buffer.from('09000000' + '29000000' + rToken + '01', 'hex')
+            hex(b)
+            conn.write(b)
+            // I will receive ConnectToPeer F
+          }
         }
       })
 
@@ -205,6 +259,9 @@ client.on('data', function(data) {
 })
 
 function getFile(user, file) {
+  gettingFile = true
+  gettingFileUser = user
+  gettingFileName = file
   console.log(user + ' ' + file)
   console.log('Search user')
   peers.forEach(peer => {
@@ -219,6 +276,36 @@ function getFile(user, file) {
       hex(buff)
       console.log()
       peer.conn.write(buff)
+    }
+  })
+}
+
+function downloadFile(user, file, token) {
+  console.log('downloadFile ' + user + ' ' + file)
+  console.log('Search user')
+  peers.forEach(peer => {
+    if (peer.username === user) {
+      let conn = net.createConnection({
+        host: peer.host,
+        port: peer.port
+      }, () => {
+        //console.log('Connected to ' + username)
+        let buf = Buffer.from('05' + '00000000' + token, 'hex')
+        conn.write(buf)
+      })
+
+      fs.writeFile('t.mp3', '')
+
+      let received = false
+      conn.on('data', data => {
+        if (!received) {
+          conn.write(Buffer.from('00000000' + '00000000', 'hex'))
+          received = true
+        } else {
+          fs.appendFile('t.mp3', data)
+        }
+        hex(data)
+      })
     }
   })
 }
