@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "debug": "^3.0.1",
     "hex": "^0.1.0"
   }
 }
