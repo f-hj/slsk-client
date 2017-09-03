@@ -1,5 +1,8 @@
 # Soulseek NodeJS client
 
+[![JavaScript Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://standardjs.com)
+[![GitHub stars](https://img.shields.io/github/stars/f-hj/slsk-client.svg)](https://github.com/f-hj/slsk-client/stargazers)
+
 ## ⚠ WIP
 I'm currently working on this thing, and currently not usable.
 
@@ -42,7 +45,7 @@ slsk.connect({
 |pass| true| Your password|
 |host||choose a different host for Slsk server|
 |port||choose a different port|
-|incomingPort|Port used for incoming connection|For next version|
+|incomingPort||Port used for incoming connection|For next version|
 
 ##### callback
 Return client (see just here ⬇)
