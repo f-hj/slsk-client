@@ -4,7 +4,7 @@
   "description": "",
   "main": "lib/index.js",
   "scripts": {
-    "test": "mocha"
+    "test": "DEBUG=slsk:* mocha"
   },
   "author": "Florian Hermouet-Joscht",
   "license": "MIT",
