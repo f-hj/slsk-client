@@ -25,7 +25,7 @@ slsk.connect({
       {
         user: 'poulet',
         file: '@@poulet-music/random.mp3',
-        freeUpload: true
+        slots: 1
       }
     ]
     client.download({
@@ -45,8 +45,8 @@ slsk.connect({
 |-----|----------|-------|---------|------|
 |user| true |Your username|
 |pass| true| Your password|
-|host||choose a different host for Slsk server|
-|port||choose a different port|
+|host||choose a different host for Slsk server|server.slsknet.org|
+|port||choose a different port|2242|
 |incomingPort||Port used for incoming connection||For next version|
 
 ##### callback
@@ -66,7 +66,7 @@ Return client (see just here ⬇)
 |-----|-------|------|
 |user|Peer name of slsk|
 |file|Full path of peer file|
-|freeUpload|Avalaible slots|True if peer have enough slots to get file immediately|
+|slots|Available slots|>= 1 if peer have enough slots to get file immediately|
 
 List of files
 ```json
@@ -74,7 +74,7 @@ List of files
   {
     "user": "jambon",
     "file": "@@jambon-slsk/myfile.m4a",
-    "freeUpload": false
+    "slots": 1
   }
 ]
 ```
