@@ -40,13 +40,13 @@ slsk.connect({
 ### slsk
 #### connect
 ##### argument
-| key | required | value | note |
-|-----|----------|-------|------|
+| key | required | value | default | note |
+|-----|----------|-------|---------|------|
 |user| true |Your username|
 |pass| true| Your password|
 |host||choose a different host for Slsk server|
 |port||choose a different port|
-|incomingPort||Port used for incoming connection|For next version|
+|incomingPort||Port used for incoming connection||For next version|
 
 ##### callback
 Return client (see just here ⬇)
@@ -54,10 +54,10 @@ Return client (see just here ⬇)
 ### client
 #### search
 ##### argument
-|key | value | note |
-|-----|-------|------|
-|req|Sent to slsk server/peers to search file, use space to add keyword|
-|timeout|Slsk doesn't sent when search is finished. We ignore request after this time| Default: 2000ms|
+| key | required | value | default | note |
+|-----|----------|-------|---------|------|
+|req|true|Sent to slsk server/peers to search file, use space to add keyword|
+|timeout||Slsk doesn't sent when search is finished. We ignore request after this time|4000|
 
 ##### callback
 
@@ -65,7 +65,7 @@ Return client (see just here ⬇)
 |-----|-------|------|
 |user|Peer name of slsk|
 |file|Full path of peer file|
-|freeUpload|Avalaible slots|True if peer have enough slots to get file immediatly|
+|freeUpload|Avalaible slots|True if peer have enough slots to get file immediately|
 
 List of files
 ```json
@@ -89,4 +89,4 @@ ftp://ftp.tu-clausthal.de/pub/mirror/ftp.gwdg.de/gnu/ftp/savannah/files/mldonkey
 
 https://www.museek-plus.org/wiki/SoulseekProtocol
 
-Nicotine+ software + Wireshark
+https://github.com/Nicotine-Plus/nicotine-plus
