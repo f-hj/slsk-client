@@ -30,4 +30,8 @@ describe('search', () => {
     })
   }).timeout(20000) //5000
 
+  it('must download correctly', (done) => {
+    client.download(file)
+  }).timeout(240000)
+
 })

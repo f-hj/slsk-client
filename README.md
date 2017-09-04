@@ -80,9 +80,10 @@ List of files
 ```
 
 #### download
-Return buffered file
+Return streamed file, wait for parts to be downloaded, can be used for HTTP 206 (partial content) for example
 
 #### downloadFile
+Return buffered file, callback called when file is completely downloaded. (Stored in RAM)
 
 ## Sources
 
