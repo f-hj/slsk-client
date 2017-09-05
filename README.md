@@ -29,9 +29,10 @@ slsk.connect({
       }
     ]
     client.download({
-      file: res[0]
-    }, (err, buffer) => {
-      //can res.send(buffer) if you use express
+      file: res[0],
+      path: __dirname + '/random.mp3'
+    }, (err, data) => {
+      //can res.send(data.buffer) if you use express
     })
   })
 })
@@ -66,7 +67,8 @@ Return client (see just here ⬇)
 |-----|-------|------|
 |user|Peer name of slsk|
 |file|Full path of peer file|
-|slots|Available slots|>= 1 if peer have enough slots to get file immediately|
+|slots|Available slots|true if peer have enough slots to get file immediately|
+|speed|Speed of peer|Provided by peer, don't know what is it exactly|
 
 List of files
 ```json
@@ -74,17 +76,24 @@ List of files
   {
     "user": "jambon",
     "file": "@@jambon-slsk/myfile.m4a",
-    "slots": 1,
+    "slots": true,
     "speed": 32
   }
 ]
 ```
 
 #### download
-Return streamed file, wait for parts to be downloaded, can be used for HTTP 206 (partial content) for example
 
-#### downloadFile
 Return buffered file, callback called when file is completely downloaded. (Stored in RAM)
+
+##### argument
+| key | required | value | default | note |
+|-----|----------|-------|---------|------|
+|file|true|File sent when searched|
+|path||Complete path where file will be stored (if you want read it later)|/tmp/slsk/{{originalName}}|
+
+#### downloadStream
+Return streamed file, wait for parts to be downloaded, can be used for HTTP 206 (partial content) for example
 
 ## Sources
 
