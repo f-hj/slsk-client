@@ -74,7 +74,8 @@ List of files
   {
     "user": "jambon",
     "file": "@@jambon-slsk/myfile.m4a",
-    "slots": 1
+    "slots": 1,
+    "speed": 32
   }
 ]
 ```
