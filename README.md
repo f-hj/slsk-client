@@ -4,6 +4,8 @@
 [![JavaScript Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://standardjs.com)
 [![GitHub stars](https://img.shields.io/github/stars/f-hj/slsk-client.svg)](https://github.com/f-hj/slsk-client/stargazers)
 
+<img align="right" src="https://fruitice.fr/logo-slsk.png"/>
+
 ## ⚠ WIP
 I'm currently working on this thing, and currently not usable.
 
