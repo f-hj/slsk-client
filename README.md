@@ -6,6 +6,20 @@
 
 <img align="right" src="https://fruitice.fr/logo-slsk.png"/>
 
+## Before starting
+
+You must already have a Soulseek account before using this module.
+
+### Implemented
+- File search
+- File download
+
+### Not implemented
+
+This stuff is not implemented (yet?), but we wait your __PR__!
+- Chat
+- Sharing (+ Upnp opened port)
+
 ## ⚠ WIP
 I'm currently working on this thing, and currently not usable.
 
