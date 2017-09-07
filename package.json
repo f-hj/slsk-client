@@ -1,7 +1,7 @@
 {
-  "name": "slskt",
+  "name": "slsk-client",
   "version": "1.0.0",
-  "description": "",
+  "description": "Soulseek NodeJS client",
   "main": "lib/index.js",
   "scripts": {
     "test": "DEBUG=slsk:* mocha"

@@ -15,7 +15,7 @@ describe('search', () => {
       client = res
       done(err)
     })
-  })
+  }).timeout(10000)
 
   it('must search correctly', (done) => {
     client.search({
