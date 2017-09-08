@@ -16,7 +16,7 @@ You must already have a Soulseek account before using this module.
 
 ### Not implemented
 
-This stuff is not implemented (yet?), but we wait your __PR__!
+This stuff is not implemented (yet?), but we wait yours __PR__!
 - Chat
 - Sharing (+ Upnp opened port)
 
@@ -40,7 +40,7 @@ slsk.connect({
     res = [
       {
         user: 'poulet',
-        file: '@@poulet-music/random.mp3',
+        file: '@@poulet-files/random.mp3',
         slots: 1
       }
     ]
