@@ -45,7 +45,7 @@ describe('search', () => {
       if (err) return done(err)
       for (let i = 0; i < res.length; i++) {
         let ext = path.extname(res[i].file)
-        if (res[i].slots >= 1 && ext === '.mp3') {
+        if (res[i].slots >= 1 && ext === '.mp3' && res[i].user !== 'xyme') {
           file2 = res[i]
           console.log(file2)
           return done()
@@ -58,6 +58,7 @@ describe('search', () => {
   it('must download correctly', (done) => {
     client.download(file, (err, down) => {
       if (err) return done(err)
+      console.log('test done')
       console.log(down)
       if (down.buffer && down.buffer.length > 0) {
         done()
