@@ -16,14 +16,14 @@ You must already have a Soulseek account before using this module.
 
 ### Not implemented
 
-This stuff is not implemented (yet?), but we wait yours __PR__!
+This stuff is not implemented (yet?), but I wait your __PR__!
 - Chat
 - Sharing (+ Upnp opened port)
 
 ## ⚠ WIP
 I'm currently working on this thing, and currently not usable.
 
-Not published on NPM yet.
+Published in NPM, can use it ad dependency.
 
 ## Getting started
 ```js

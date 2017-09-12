@@ -8,6 +8,13 @@
   },
   "author": "Florian Hermouet-Joscht",
   "license": "MIT",
+  "repository": "f-hj/slsk-client",
+  "keywords": [
+    "slsk",
+    "soulseek",
+    "js-client",
+    "socket"
+  ],
   "dependencies": {
     "debug": "^3.0.1",
     "hex": "^0.1.0"

@@ -43,6 +43,9 @@ describe('search', () => {
       timeout: 4000
     }, (err, res) => {
       if (err) return done(err)
+      res.sort((a, b) => {
+        return b.speed - a.speed
+      })
       for (let i = 0; i < res.length; i++) {
         let ext = path.extname(res[i].file)
         if (res[i].slots >= 1 && ext === '.mp3' && res[i].user !== 'xyme') {
@@ -58,6 +61,9 @@ describe('search', () => {
   it('must download correctly', (done) => {
     client.download(file, (err, down) => {
       if (err) return done(err)
+      res.sort((a, b) => {
+        return b.speed - a.speed
+      })
       console.log('test done')
       console.log(down)
       if (down.buffer && down.buffer.length > 0) {
