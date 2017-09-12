@@ -111,6 +111,13 @@ Return buffered file, callback called when file is completely downloaded. (Store
 #### downloadStream
 Return streamed file, wait for parts to be downloaded, can be used for HTTP 206 (partial content) for example
 
+## Tests
+
+Use env variables for tests
+- `DEBUG=slsk:*` to display debug messages
+- `SLSK_USER=MyUsername`
+- `SLSK_PASS=MyPassword`
+
 ## Sources
 
 ftp://ftp.tu-clausthal.de/pub/mirror/ftp.gwdg.de/gnu/ftp/savannah/files/mldonkey/docs/Soulseek/soulseek_protocol.html

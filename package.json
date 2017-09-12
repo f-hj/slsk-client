@@ -4,7 +4,7 @@
   "description": "Soulseek NodeJS client",
   "main": "lib/index.js",
   "scripts": {
-    "test": "DEBUG=slsk:* mocha"
+    "test": "mocha"
   },
   "author": "Florian Hermouet-Joscht",
   "license": "MIT",

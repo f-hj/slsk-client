@@ -1,4 +1,9 @@
 language: node_js
+
+env:
+  global:
+    - DEBUG=slsk:*
+
 node_js:
   - "8"
 
