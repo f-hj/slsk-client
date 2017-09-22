@@ -1,4 +1,5 @@
 const path = require('path')
+const fs = require('fs')
 const process = require('process')
 
 const slsk = require('../lib/index.js')
@@ -62,7 +63,9 @@ describe('search', () => {
   }).timeout(5000) //5000
 
   it('must download correctly', (done) => {
-    client.download(file, (err, down) => {
+    client.download({
+      file
+    }, (err, down) => {
       if (err) return done(err)
       console.log('test done')
       console.log(down)
@@ -73,11 +76,34 @@ describe('search', () => {
   }).timeout(240000)
 
   it('must download correctly a second time', (done) => {
-    client.download(file2, (err, down) => {
+    client.download({
+      file: file2
+    }, (err, down) => {
       if (err) return done(err)
       console.log(down)
       if (down.buffer && down.buffer.length > 0) {
         done()
+      }
+    })
+  }).timeout(240000)
+
+  it('must download correctly with path', (done) => {
+    client.download({
+      file,
+      path: '/tmp/slsk-client_test.mp3'
+    }, (err, down) => {
+      if (err) return done(err)
+      console.log(down)
+      if (down.buffer && down.buffer.length > 0) {
+        fs.stat('/tmp/slsk-client_test.mp3', (err, stats) => {
+          if (err) {
+            return done(err)
+          }
+          if (stats.size !== file.size) {
+            return done(new Error('File size is not same as specified'))
+          }
+          done()
+        })
       }
     })
   }).timeout(240000)

@@ -20,10 +20,10 @@ This stuff is not implemented (yet?), but I wait your __PR__!
 - Chat
 - Sharing (+ Upnp opened port)
 
-## ⚠ WIP
-I'm currently working on this thing, and currently not usable.
+## ⚠ Infos
+You must choose file with slots: true, or you'll wait a long time before downloading it.
 
-Published in NPM, can use it ad dependency.
+I advise you to sort files by speed and select the best one (OK, speed is sent by client and can be fake, but the big majority is real).
 
 ## Getting started
 ```js
@@ -41,7 +41,9 @@ slsk.connect({
       {
         user: 'poulet',
         file: '@@poulet-files/random.mp3',
-        slots: 1
+        size: 6437362,
+        slots: true,
+        speed: 1251293
       }
     ]
     client.download({
@@ -108,7 +110,12 @@ Return buffered file, callback called when file is completely downloaded. (Store
 |file|true|File sent when searched|
 |path||Complete path where file will be stored (if you want read it later)|/tmp/slsk/{{originalName}}|
 
-#### downloadStream
+##### callback
+| key | value |
+|-----|-------|
+|buffer|Complete buffer of file|
+
+#### downloadStream (WIP, not implemented yet)
 Return streamed file, wait for parts to be downloaded, can be used for HTTP 206 (partial content) for example
 
 ## Tests
