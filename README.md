@@ -43,6 +43,7 @@ slsk.connect({
         file: '@@poulet-files/random.mp3',
         size: 6437362,
         slots: true,
+        bitrate: 320,
         speed: 1251293
       }
     ]
@@ -85,7 +86,9 @@ Return client (see just here ⬇)
 |-----|-------|------|
 |user|Peer name of slsk|
 |file|Full path of peer file|
+|size|Size of file|
 |slots|Available slots|true if peer have enough slots to get file immediately|
+|bitrate|Bitrate of current file|Can be undefined if not sent by client|
 |speed|Speed of peer|Provided by peer, don't know what is it exactly|
 
 List of files
