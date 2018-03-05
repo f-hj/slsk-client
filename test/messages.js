@@ -1,3 +1,5 @@
+/* eslint-env mocha */
+
 const assert = require('assert')
 
 const Messages = require('../lib/messages.js')
@@ -29,5 +31,4 @@ describe('class Messages', () => {
     let msgs = new Messages(Buffer.from('75', 'hex'), rest)
     assert.equal(msgs.length, 1)
   })
-
 })

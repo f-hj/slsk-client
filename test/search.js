@@ -1,3 +1,5 @@
+/* eslint-env mocha */
+
 const path = require('path')
 const fs = require('fs')
 const process = require('process')
@@ -5,7 +7,6 @@ const process = require('process')
 const slsk = require('../lib/index.js')
 
 describe('search', () => {
-
   let client
   let file
   let file2
@@ -39,7 +40,7 @@ describe('search', () => {
       }
       done(new Error('Test: no file with free slot'))
     })
-  }).timeout(5000) //5000
+  }).timeout(5000) // 5000
 
   it('must search correctly a second time', (done) => {
     client.search({
@@ -60,7 +61,7 @@ describe('search', () => {
       }
       done(new Error('Test: no file with free slot'))
     })
-  }).timeout(5000) //5000
+  }).timeout(5000) // 5000
 
   it('must download correctly', (done) => {
     client.download({
@@ -107,5 +108,4 @@ describe('search', () => {
       }
     })
   }).timeout(240000)
-
 })

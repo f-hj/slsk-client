@@ -1,11 +1,11 @@
+/* eslint-env mocha */
+
 const assert = require('assert')
 
 const Message = require('../lib/message.js')
 
 describe('class Message', () => {
-
   describe('write', () => {
-
     it('correct int8', () => {
       let msg = new Message()
       assert.equal(msg.int8(1).getBuff().toString('hex'), '0100000001')
@@ -25,11 +25,9 @@ describe('class Message', () => {
       let msg = new Message()
       assert.equal(msg.int8(1).int32(666).str('coucou').getBuff().toString('hex'), '0f000000019a02000006000000636f75636f75')
     })
-
   })
 
   describe('read', () => {
-
     let buff = Buffer.from('0f000000019a02000006000000636f75636f75', 'hex')
     let msg = new Message(buff)
 
@@ -43,7 +41,5 @@ describe('class Message', () => {
     it('must be not writable', () => {
       assert.equal(msg.write, false)
     })
-
   })
-
 })

@@ -1,3 +1,5 @@
+/* eslint-env mocha */
+
 const process = require('process')
 
 const assert = require('assert')
@@ -5,7 +7,6 @@ const assert = require('assert')
 const slsk = require('../lib/index.js')
 
 describe('login', () => {
-
   it('must have env vars', (done) => {
     assert.equal(typeof process.env.SLSK_USER, 'string')
     assert.equal(typeof process.env.SLSK_PASS, 'string')
@@ -34,5 +35,4 @@ describe('login', () => {
       done()
     })
   })
-
 })
