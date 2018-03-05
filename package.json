@@ -20,6 +20,7 @@
     "hex": "^0.1.0"
   },
   "devDependencies": {
-    "mocha": "^3.5.0"
+    "mocha": "^3.5.0",
+    "standard": "latest"
   }
 }
