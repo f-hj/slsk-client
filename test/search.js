@@ -3,6 +3,7 @@
 const path = require('path')
 const fs = require('fs')
 const process = require('process')
+const assert = require('assert')
 
 const slsk = require('../lib/index.js')
 
@@ -106,6 +107,24 @@ describe('search', () => {
           done()
         })
       }
+    })
+  }).timeout(240000)
+
+  it('must download correctly with stream', (done) => {
+    client.downloadStream({
+      file
+    }, (err, stream) => {
+      let nbPacket = 0
+      if (err) return done(err)
+
+      stream.on('data', data => {
+        nbPacket++
+      })
+
+      stream.on('end', () => {
+        assert.notEqual(nbPacket, 0)
+        done()
+      })
     })
   }).timeout(240000)
 })

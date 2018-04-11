@@ -121,6 +121,14 @@ Return buffered file, callback called when file is completely downloaded. (Store
 #### downloadStream (WIP, not implemented yet)
 Return streamed file, wait for parts to be downloaded, can be used for HTTP 206 (partial content) for example
 
+##### argument
+| key | required | value | default | note |
+|-----|----------|-------|---------|------|
+|file|true|File sent when searched|
+
+##### callback
+Readable stream
+
 ## Tests
 
 Use env variables for tests
