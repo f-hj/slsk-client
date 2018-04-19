@@ -103,6 +103,13 @@ List of files
 ]
 ```
 
+##### events
+You can handle results with events
+```js
+client.on('found') // any search result
+client.on('found:${req}') // or only a specific request
+```
+
 #### download
 
 Return buffered file, callback called when file is completely downloaded. (Stored in RAM)
