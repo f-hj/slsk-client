@@ -125,7 +125,8 @@ Return buffered file, callback called when file is completely downloaded. (Store
 |-----|-------|
 |buffer|Complete buffer of file|
 
-#### downloadStream (WIP, not implemented yet)
+#### downloadStream
+WARNING: please report any issue with this function
 Return streamed file, wait for parts to be downloaded, can be used for HTTP 206 (partial content) for example
 
 ##### argument
