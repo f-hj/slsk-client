@@ -17,8 +17,7 @@
     "socket"
   ],
   "dependencies": {
-    "debug": "^3.0.1",
-    "hex": "^0.1.0"
+    "debug": "^3.0.1"
   },
   "devDependencies": {
     "eslint": "^5.0.1",

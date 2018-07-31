@@ -1,9 +1,7 @@
 /* eslint-env mocha */
 
 const process = require('process')
-
 const assert = require('assert')
-
 const slsk = require('../lib/index.js')
 
 describe('login', () => {
@@ -29,7 +27,7 @@ describe('login', () => {
   it('must not login', (done) => {
     slsk.connect({
       user: 'IAmWebServer',
-      pass: 'IAmInvalidPassword'
+      pass: 'IAmTheWrongPassword'
     }, (err, res) => {
       assert.equal(err.message, 'INVALIDPASS')
       done()
