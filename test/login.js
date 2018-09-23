@@ -27,7 +27,7 @@ describe('login', () => {
   it('must not login', (done) => {
     slsk.connect({
       user: 'IAmWebServer',
-      pass: 'IAmTheWrongPassword'
+      pass: 'IAmWrong'
     }, (err, res) => {
       assert.equal(err.message, 'INVALIDPASS')
       done()
