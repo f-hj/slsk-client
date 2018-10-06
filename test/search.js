@@ -28,16 +28,13 @@ describe('search', () => {
       timeout: 4000
     }, (err, res) => {
       if (err) return done(err)
-      res.sort((a, b) => {
-        return b.speed - a.speed
-      })
-      for (let i = 0; i < res.length; i++) {
-        let ext = path.extname(res[i].file)
-        if (res[i].slots >= 1 && ext === '.mp3') {
-          file = res[i]
-          console.log(file)
-          return done()
-        }
+      file = res.filter(it => path.extname(it.file) === '.mp3')
+        .sort((a, b) => (a.size / a.speed) - (b.size / b.speed))
+        .find(it => it.slots)
+
+      if (file) {
+        console.log(file)
+        return done()
       }
       done(new Error('Test: no file with free slot'))
     })
@@ -49,16 +46,13 @@ describe('search', () => {
       timeout: 4000
     }, (err, res) => {
       if (err) return done(err)
-      res.sort((a, b) => {
-        return b.speed - a.speed
-      })
-      for (let i = 0; i < res.length; i++) {
-        let ext = path.extname(res[i].file)
-        if (res[i].slots >= 1 && ext === '.mp3' && res[i].user !== 'xyme') {
-          file2 = res[i]
-          console.log(file2)
-          return done()
-        }
+      file2 = res.filter(it => path.extname(it.file) === '.mp3')
+        .sort((a, b) => (a.size / a.speed) - (b.size / b.speed))
+        .find(it => it.slots)
+
+      if (file2) {
+        console.log(file2)
+        return done()
       }
       done(new Error('Test: no file with free slot'))
     })

@@ -26,39 +26,18 @@ describe('multi download', () => {
       timeout: 4000
     }, (err, res) => {
       if (err) return done(err)
-      res.sort((a, b) => {
-        return b.speed - a.speed
-      })
-      let indexFile = 0
-      for (let i = 0; i < res.length; i++) {
-        let ext = path.extname(res[i].file)
-        if (res[i].slots >= 1 && ext === '.mp3') {
-          file1 = res[i]
-          indexFile = i
-          console.log('file1', file1)
-          break
-        }
-      }
-      indexFile++
+      let files = res.filter(it => path.extname(it.file) === '.mp3')
+        .sort((a, b) => (a.size / a.speed) - (b.size / b.speed))
+        .filter(it => it.slots)
 
-      for (let i = indexFile; i < res.length; i++) {
-        let ext = path.extname(res[i].file)
-        if (res[i].slots >= 1 && ext === '.mp3') {
-          file2 = res[i]
-          indexFile = i
-          console.log('file2', file2)
-          break
-        }
-      }
-      indexFile++
-
-      for (let i = indexFile; i < res.length; i++) {
-        let ext = path.extname(res[i].file)
-        if (res[i].slots >= 1 && ext === '.mp3') {
-          file3 = res[i]
-          console.log('file3', file3)
-          return done()
-        }
+      if (files.length >= 3) {
+        file1 = files[0]
+        file2 = files[1]
+        file3 = files[2]
+        console.log('file1', file1)
+        console.log('file2', file2)
+        console.log('file3', file3)
+        return done()
       }
       done(new Error('Test: no file with free slot'))
     })
