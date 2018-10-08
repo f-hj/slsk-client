@@ -116,7 +116,7 @@ describe('search', () => {
       })
 
       stream.on('end', () => {
-        assert.notEqual(nbPacket, 0)
+        assert.notStrictEqual(nbPacket, 0)
         done()
       })
     })

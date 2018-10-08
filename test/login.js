@@ -6,8 +6,8 @@ const slsk = require('../lib/index.js')
 
 describe('login', () => {
   it('must have env vars', (done) => {
-    assert.equal(typeof process.env.SLSK_USER, 'string')
-    assert.equal(typeof process.env.SLSK_PASS, 'string')
+    assert.strictEqual(typeof process.env.SLSK_USER, 'string')
+    assert.strictEqual(typeof process.env.SLSK_PASS, 'string')
     done()
   })
 
@@ -29,7 +29,7 @@ describe('login', () => {
       user: 'IAmWebServer',
       pass: 'IAmWrong'
     }, (err, res) => {
-      assert.equal(err.message, 'INVALIDPASS')
+      assert.strictEqual(err.message, 'INVALIDPASS')
       done()
     })
   })
