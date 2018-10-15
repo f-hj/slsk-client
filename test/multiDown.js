@@ -9,6 +9,9 @@ describe('multi download', () => {
   let file1
   let file2
   let file3
+  after(() => {
+    if (client) client.destroy()
+  })
 
   it('must login', (done) => {
     slsk.connect({

@@ -11,6 +11,9 @@ describe('search', () => {
   let client
   let file
   let file2
+  after(() => {
+    if (client) client.destroy()
+  })
 
   it('must login', (done) => {
     slsk.connect({
@@ -69,7 +72,7 @@ describe('search', () => {
         done()
       }
     })
-  }).timeout(240000)
+  }).timeout(120000)
 
   it('must download correctly a second time', (done) => {
     client.download({
@@ -81,7 +84,7 @@ describe('search', () => {
         done()
       }
     })
-  }).timeout(240000)
+  }).timeout(120000)
 
   it('must download correctly with path', (done) => {
     client.download({
@@ -102,7 +105,7 @@ describe('search', () => {
         })
       }
     })
-  }).timeout(240000)
+  }).timeout(120000)
 
   it('must download correctly with stream', (done) => {
     client.downloadStream({
@@ -120,5 +123,5 @@ describe('search', () => {
         done()
       })
     })
-  }).timeout(240000)
+  }).timeout(120000)
 })
