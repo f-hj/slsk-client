@@ -1,6 +1,6 @@
 {
   "name": "slsk-client",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Soulseek NodeJS client",
   "main": "lib/index.js",
   "scripts": {
@@ -17,10 +17,10 @@
     "socket"
   ],
   "dependencies": {
-    "debug": "^3.2.5"
+    "debug": "^3.2.6"
   },
   "devDependencies": {
-    "eslint": "^5.6.1",
+    "eslint": "^5.7.0",
     "eslint-config-standard": "^12.0.0",
     "eslint-plugin-import": "^2.14.0",
     "eslint-plugin-node": "^6.0.1",
