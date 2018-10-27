@@ -5,11 +5,13 @@ const slsk = require('../../lib/index.js')
 const MockServer = require('./mock-server.js')
 
 describe('login', () => {
-  const serverAddress = {
-    host: 'localhost',
-    port: 2242
-  }
-  let mockServer = new MockServer(serverAddress)
+  const serverHost = 'localhost'
+  const serverPort = 2242
+
+  let mockServer = new MockServer({
+    host: serverHost,
+    port: serverPort
+  })
   mockServer.on('login', login => {
     if (login.username === 'ImTheUsername' && login.password === 'EasyButRight') {
       mockServer.loginSuccess(login.client)
@@ -22,7 +24,8 @@ describe('login', () => {
     slsk.connect({
       user: 'ImTheUsername',
       pass: 'EasyButRight',
-      server: serverAddress
+      host: serverHost,
+      port: serverPort
     }, (err, res) => {
       done(err)
     })
@@ -32,7 +35,8 @@ describe('login', () => {
     slsk.connect({
       user: 'IAmWebServer',
       pass: 'IAmWrong',
-      server: serverAddress
+      host: serverHost,
+      port: serverPort
     }, (err, res) => {
       assert.strictEqual(err.message, 'INVALIDPASS')
       done()
