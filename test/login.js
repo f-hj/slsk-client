@@ -5,6 +5,11 @@ const assert = require('assert')
 const slsk = require('../lib/index.js')
 
 describe('login', () => {
+  let client
+  after(() => {
+    if (client) client.destroy()
+  })
+
   it('must have env vars', (done) => {
     assert.strictEqual(typeof process.env.SLSK_USER, 'string')
     assert.strictEqual(typeof process.env.SLSK_PASS, 'string')
@@ -16,6 +21,7 @@ describe('login', () => {
       user: process.env.SLSK_USER,
       pass: process.env.SLSK_PASS
     }, (err, res) => {
+      client = res
       done(err)
     })
   })
