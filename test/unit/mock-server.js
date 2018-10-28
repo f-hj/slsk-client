@@ -29,6 +29,10 @@ module.exports = class Server extends EventEmitter {
             debug(`Login attempt username ${username} version ${version}`)
             this.emit('login', { client, username, password, version })
             break
+          case 2:
+            let port = msg.int32()
+            debug(`recv SetWaitPort ${port}`)
+            break
           default:
             throw new Error(`unknown srv message code: ${code}`)
         }
