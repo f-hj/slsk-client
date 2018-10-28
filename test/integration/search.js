@@ -5,7 +5,7 @@ const fs = require('fs')
 const process = require('process')
 const assert = require('assert')
 
-const slsk = require('../lib/index.js')
+const slsk = require('../../lib/index.js')
 
 describe('search', () => {
   let client

@@ -1,8 +1,7 @@
 const EventEmitter = require('events')
 const net = require('net')
-const Messages = require('../../lib/messages.js')
-const Message = require('../../lib/message.js')
-// const MessageFactory = require('./message-factory.js')
+const Messages = require('../lib/messages.js')
+const Message = require('../lib/message.js')
 const debug = require('debug')('slsk:mock-server:i')
 
 module.exports = class Server extends EventEmitter {

@@ -5,6 +5,7 @@
   "main": "lib/index.js",
   "scripts": {
     "pretest": "eslint .",
+    "test:unit": "eslint . && mocha",
     "test": "mocha --recursive"
   },
   "author": "Florian Hermouet-Joscht",

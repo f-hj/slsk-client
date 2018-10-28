@@ -1,7 +1,7 @@
 /* eslint-env mocha */
 
 const assert = require('assert')
-const slsk = require('../../lib/index.js')
+const slsk = require('../lib/index.js')
 const MockServer = require('./mock-server.js')
 
 describe('login', () => {
