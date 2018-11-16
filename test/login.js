@@ -10,12 +10,6 @@ describe('login', () => {
     if (client) client.destroy()
   })
 
-  it('must have env vars', (done) => {
-    assert.strictEqual(typeof process.env.SLSK_USER, 'string')
-    assert.strictEqual(typeof process.env.SLSK_PASS, 'string')
-    done()
-  })
-
   const serverHost = 'localhost'
   const serverPort = 2242
 
