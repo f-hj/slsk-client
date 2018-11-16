@@ -1,14 +1,15 @@
 /* eslint-env mocha */
 
-const slsk = require('../lib/index.js')
-
 const path = require('path')
+
+const slsk = require('../../lib/index.js')
 
 describe('multi download', () => {
   let client
   let file1
   let file2
   let file3
+
   after(() => {
     if (client) client.destroy()
   })

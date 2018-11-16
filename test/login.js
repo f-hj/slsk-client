@@ -1,33 +1,42 @@
 /* eslint-env mocha */
 
-const process = require('process')
 const assert = require('assert')
 const slsk = require('../lib/index.js')
+const MockServer = require('./mock-server.js')
 
 describe('login', () => {
-  it('must have env vars', (done) => {
-    assert.strictEqual(typeof process.env.SLSK_USER, 'string')
-    assert.strictEqual(typeof process.env.SLSK_PASS, 'string')
-    done()
+  const serverHost = 'localhost'
+  const serverPort = 2242
+
+  let mockServer = new MockServer({
+    host: serverHost,
+    port: serverPort
+  })
+  mockServer.on('login', login => {
+    if (login.username === 'ImTheUsername' && login.password === 'EasyButRight') {
+      mockServer.loginSuccess(login.client)
+    } else {
+      mockServer.loginFail(login.client)
+    }
   })
 
-  it('must login', (done) => {
+  it('must login with valid credentials', (done) => {
     slsk.connect({
-      user: process.env.SLSK_USER,
-      pass: process.env.SLSK_PASS
+      user: 'ImTheUsername',
+      pass: 'EasyButRight',
+      host: serverHost,
+      port: serverPort
     }, (err, res) => {
       done(err)
     })
   })
 
-  it('must close socket', () => {
-    slsk.disconnect()
-  })
-
-  it('must not login', (done) => {
+  it('must not login with invalid credentials', (done) => {
     slsk.connect({
       user: 'IAmWebServer',
-      pass: 'IAmWrong'
+      pass: 'IAmWrong',
+      host: serverHost,
+      port: serverPort
     }, (err, res) => {
       assert.strictEqual(err.message, 'INVALIDPASS')
       done()

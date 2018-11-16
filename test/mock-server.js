@@ -1,8 +1,7 @@
 const EventEmitter = require('events')
 const net = require('net')
-const Messages = require('../../lib/messages.js')
-const Message = require('../../lib/message.js')
-// const MessageFactory = require('./message-factory.js')
+const Messages = require('../lib/messages.js')
+const Message = require('../lib/message.js')
 const debug = require('debug')('slsk:mock-server:i')
 
 module.exports = class Server extends EventEmitter {
@@ -28,6 +27,10 @@ module.exports = class Server extends EventEmitter {
             let version = msg.int32()
             debug(`Login attempt username ${username} version ${version}`)
             this.emit('login', { client, username, password, version })
+            break
+          case 2:
+            let port = msg.int32()
+            debug(`recv SetWaitPort ${port}`)
             break
           default:
             throw new Error(`unknown srv message code: ${code}`)
