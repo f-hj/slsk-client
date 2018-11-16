@@ -5,7 +5,7 @@ const fs = require('fs')
 const process = require('process')
 const assert = require('assert')
 
-const slsk = require('../lib/index.js')
+const slsk = require('../../lib/index.js')
 
 describe('search', () => {
   let client
@@ -13,6 +13,12 @@ describe('search', () => {
   let file2
   after(() => {
     if (client) client.destroy()
+  })
+
+  it('must have env vars', (done) => {
+    assert.strictEqual(typeof process.env.SLSK_USER, 'string')
+    assert.strictEqual(typeof process.env.SLSK_PASS, 'string')
+    done()
   })
 
   it('must login', (done) => {
