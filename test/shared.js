@@ -2,7 +2,7 @@
 
 const assert = require('assert')
 const fs = require('fs')
-const Shared = require('../lib/shared.js')
+const Shared = require('../lib/share/shared.js')
 
 describe('class Shared', () => {
   let baseFolder = '/tmp/slsk-share'
