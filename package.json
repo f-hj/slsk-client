@@ -6,7 +6,7 @@
   "scripts": {
     "pretest": "eslint .",
     "test:unit": "eslint . && cov8 mocha",
-    "test": "cov8 mocha --recursive"
+    "test": "cov8 mocha test/*"
   },
   "author": "Florian Hermouet-Joscht",
   "license": "MIT",
