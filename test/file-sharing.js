@@ -1,0 +1,55 @@
+/* eslint-env mocha */
+
+const assert = require('assert')
+const slsk = require('../lib/index.js')
+const fs = require('fs')
+const crypto = require('crypto')
+const MockServer = require('./mock-server.js')
+const MockDistributedPeer = require('./mock-distributed-peer.js')
+const MockDefaultPeer = require('./mock-default-peer.js')
+
+describe('file-sharing', () => {
+  after(() => {
+    mockServer.destroy()
+  })
+
+  let baseFolder = '/tmp/slsk-client/file-sharing'
+  createFolder(baseFolder)
+  fs.writeFileSync(baseFolder + '/great song.mp3', 'data')
+
+  const serverAddress = { host: 'localhost', port: 2243 }
+  const distributedPeerAddress = { host: '127.0.0.1', port: 3250 }
+  const defaultPeerAddress = { host: '127.0.0.1', port: 4250 }
+
+  let mockServer = new MockServer(serverAddress)
+    .on('login', login => mockServer.loginSuccess(login.client))
+    .on('have-no-parent', netInfo => mockServer.netInfo(netInfo.client, 'parent', distributedPeerAddress.host, distributedPeerAddress.port))
+    .on('get-peer-address', getPeerAddress => mockServer.returnPeerAddress(getPeerAddress.client, 'user', defaultPeerAddress.host, defaultPeerAddress.port))
+
+  let mockDistributedPeer = new MockDistributedPeer(distributedPeerAddress)
+    .on('peer-init', peerInfo => mockDistributedPeer.searchRequest(peerInfo.client, 'user', crypto.randomBytes(4).toString('hex'), 'song'))
+
+  let mockDefaultPeer = new MockDefaultPeer(defaultPeerAddress)
+
+  it('must sends file search result to client who searched', (done) => {
+    slsk.connect({
+      user: 'any',
+      pass: 'any',
+      host: serverAddress.host,
+      port: serverAddress.port,
+      sharedFolders: ['/tmp/slsk-client/file-sharing']
+    }, () => {})
+
+    mockDefaultPeer.on('file-search-result', fileSearchResult => {
+      assert.strictEqual(fileSearchResult.files[0].file, baseFolder + '/great song.mp3')
+      done()
+    })
+  }).timeout(5000)
+})
+
+function createFolder (path) {
+  try {
+    let opts = { recursive: true }
+    fs.mkdirSync(path, opts)
+  } catch (err) { }
+}
