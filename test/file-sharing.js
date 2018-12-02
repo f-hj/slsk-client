@@ -27,7 +27,12 @@ describe('file-sharing', () => {
     .on('get-peer-address', getPeerAddress => mockServer.returnPeerAddress(getPeerAddress.client, 'user', defaultPeerAddress.host, defaultPeerAddress.port))
 
   let mockDistributedPeer = new MockDistributedPeer(distributedPeerAddress)
-    .on('peer-init', peerInfo => mockDistributedPeer.searchRequest(peerInfo.client, 'user', crypto.randomBytes(4).toString('hex'), 'song'))
+    .on('peer-init', peerInfo => {
+      let ticket = crypto.randomBytes(4).toString('hex')
+      mockDistributedPeer.searchRequest(peerInfo.client, 'user', ticket, 'song')
+      // the second search request is to verify handling of the same request received from another 'parent' (real case)
+      mockDistributedPeer.searchRequest(peerInfo.client, 'user', ticket, 'song')
+    })
 
   let mockDefaultPeer = new MockDefaultPeer(defaultPeerAddress)
 
