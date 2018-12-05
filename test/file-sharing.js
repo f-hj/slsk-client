@@ -45,6 +45,7 @@ describe('file-sharing', () => {
       let file = fileSearchResult.files[0]
       assert.strictEqual(file.file, baseFolder + '/great song.mp3')
       assert.strictEqual(file.size, 4)
+      assert.strictEqual(file.user, 'any')
       done()
     })
   }).timeout(5000)
