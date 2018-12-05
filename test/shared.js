@@ -34,7 +34,10 @@ describe('class Shared', () => {
       assert.strictEqual(results.length, 1)
       assert.deepEqual(results[0], {
         key: 'good file.mp3',
-        value: baseFolder + '/good file.mp3'
+        value: {
+          file: baseFolder + '/good file.mp3',
+          size: 4
+        }
       })
       done()
     })
@@ -50,7 +53,10 @@ describe('class Shared', () => {
       assert.strictEqual(results.length, 1)
       assert.deepEqual(results[0], {
         key: 'first level/good file.mp3',
-        value: baseFolder + '/first level/good file.mp3'
+        value: {
+          file: baseFolder + '/first level/good file.mp3',
+          size: 4
+        }
       })
       done()
     })
