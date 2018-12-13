@@ -10,13 +10,7 @@ node_js:
 install: npm install
 
 script:
-  - curl -L https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 > ./cc-test-reporter
-  - chmod +x ./cc-test-reporter
-  - ./cc-test-reporter before-build
-  - cov8 clear
   - npm run test:unit
-  - cov8 report lcov
-  - ./cc-test-reporter after-build --exit-code 0
 
 notifications:
   email: false
