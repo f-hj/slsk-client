@@ -5,8 +5,6 @@
   "main": "lib/index.js",
   "scripts": {
     "pretest": "eslint .",
-    "test:unit": "eslint . && cov8 mocha",
-    "test": "cov8 mocha test/*"
     "test:unit": "eslint . && nyc mocha",
     "test": "nyc mocha test/*"
   },
