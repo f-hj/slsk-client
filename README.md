@@ -68,6 +68,7 @@ slsk.connect({
 |host||choose a different host for Slsk server|server.slsknet.org|
 |port||choose a different port|2242|
 |incomingPort||Port used for incoming connection|2234|
+|sharedFolders||Folders to be shared|[]|
 
 ##### callback
 Return client (see just here ⬇)

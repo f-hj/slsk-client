@@ -2,13 +2,13 @@ const EventEmitter = require('events')
 const net = require('net')
 const Messages = require('../lib/messages.js')
 const Message = require('../lib/message.js')
-const debug = require('debug')('slsk:mock-server:i')
+const debug = require('debug')('slsk:mock:server:i')
 
-module.exports = class Server extends EventEmitter {
+module.exports = class MockServer extends EventEmitter {
   constructor (address) {
     super()
 
-    let server = net.createServer(client => {
+    this.server = net.createServer(client => {
       debug(`Client connected`)
       let msgs = new Messages()
 
@@ -32,17 +32,29 @@ module.exports = class Server extends EventEmitter {
             let port = msg.int32()
             debug(`recv SetWaitPort ${port}`)
             break
+          case 3:
+            let user = msg.str()
+            debug(`recv getPeerAddress for user ${user}`)
+            this.emit('get-peer-address', { client, user })
+            break
+          case 71:
+            let flag = msg.int8()
+            debug(`recv HaveNoParent message: ${flag}`)
+            if (flag) {
+              this.emit('have-no-parent', { client })
+            }
+            break
           default:
-            throw new Error(`unknown srv message code: ${code}`)
+            debug(`unknown srv message code: ${code}`)
         }
       })
     })
 
-    server.on('error', err => {
+    this.server.on('error', err => {
       debug(`Error ${err.code}`)
     })
 
-    server.listen(address.port, address.host, () => {
+    this.server.listen(address.port, address.host, () => {
       debug(`MockServer bound on ${address.host}:${address.port}`)
     })
   }
@@ -58,6 +70,31 @@ module.exports = class Server extends EventEmitter {
       loginResponse(0, 'INVALIDPASS').getBuff()
     )
   }
+
+  netInfo (client, user, host, port) {
+    client.write(
+      netInfo(user, host, port).getBuff()
+    )
+  }
+
+  returnPeerAddress (client, user, host, port) {
+    let ip = host.split('.')
+    client.write(
+      new Message()
+        .int32(3)
+        .str(user)
+        .int8(parseInt(ip[3]))
+        .int8(parseInt(ip[2]))
+        .int8(parseInt(ip[1]))
+        .int8(parseInt(ip[0]))
+        .int32(port)
+        .getBuff()
+    )
+  }
+
+  destroy () {
+    this.server.close()
+  }
 }
 
 function loginResponse (status, message) {
@@ -65,4 +102,17 @@ function loginResponse (status, message) {
     .int32(1)
     .int8(status)
     .str(message)
+}
+
+function netInfo (user, host, port) {
+  let ip = host.split('.')
+  return new Message()
+    .int32(102)
+    .int32(1)
+    .str(user)
+    .int8(parseInt(ip[3]))
+    .int8(parseInt(ip[2]))
+    .int8(parseInt(ip[1]))
+    .int8(parseInt(ip[0]))
+    .int32(port)
 }

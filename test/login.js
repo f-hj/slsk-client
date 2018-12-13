@@ -5,13 +5,9 @@ const slsk = require('../lib/index.js')
 const MockServer = require('./mock-server.js')
 
 describe('login', () => {
-  let client
-  after(() => {
-    if (client) client.destroy()
-  })
-
   const serverHost = 'localhost'
   const serverPort = 2242
+  let client
 
   let mockServer = new MockServer({
     host: serverHost,
@@ -23,6 +19,11 @@ describe('login', () => {
     } else {
       mockServer.loginFail(login.client)
     }
+  })
+
+  after(() => {
+    if (client) client.destroy()
+    mockServer.destroy()
   })
 
   it('must login with valid credentials', (done) => {
