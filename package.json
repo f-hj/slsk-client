@@ -5,8 +5,8 @@
   "main": "lib/index.js",
   "scripts": {
     "pretest": "eslint .",
-    "test:unit": "eslint . && cov8 mocha",
-    "test": "cov8 mocha test/*"
+    "test:unit": "eslint . && nyc mocha",
+    "test": "nyc mocha test/*"
   },
   "author": "Florian Hermouet-Joscht",
   "license": "MIT",
@@ -28,7 +28,7 @@
     "eslint-plugin-promise": "^3.8.0",
     "eslint-plugin-standard": "^3.1.0",
     "mocha": "^3.5.3",
-    "standard": "latest",
-    "v8-coverage": "^1.0.8"
+    "nyc": "^13.1.0",
+    "standard": "latest"
   }
 }
