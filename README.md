@@ -27,12 +27,11 @@ I advise you to sort files by speed and select the best one (OK, speed is sent b
 
 ## Getting started
 ```js
-const path = require('path')
 const slsk = require('slsk-client')
+
 slsk.connect({
   user: 'username',
-  pass: 'password',
-  tmpDir: path.resolve(__dirname, '/slsk')
+  pass: 'password'
 }, (err, client) => {
   client.search({
     req: 'random',
