@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "rootDirs": [ "./lib" ],
+    "outDir": "./build",
+    "experimentalDecorators": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "forceConsistentCasingInFileNames": true,
+    "module": "commonjs",
+    "declaration": true,
+    "importHelpers": false,
+    "noEmitOnError": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "pretty": true,
+    "inlineSourceMap": true,
+    "noImplicitThis": true,
+    "noImplicitAny": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "skipLibCheck": true,
+    "target": "es2018",
+    "esModuleInterop": true,
+    "emitDecoratorMetadata": true,
+    "resolveJsonModule": true,
+    "lib": [
+      "es2019"
+    ]
+  },
+  "exclude": [
+    "node_modules",
+    "build",
+    "coverage"
+  ]
+}
