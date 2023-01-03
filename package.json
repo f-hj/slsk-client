@@ -5,8 +5,8 @@
   "main": "lib/index.js",
   "scripts": {
     "pretest": "eslint .",
-    "test:unit": "eslint . && nyc mocha",
-    "test": "nyc mocha test/*"
+    "test:unit": "eslint . && nyc mocha --exit",
+    "test": "nyc mocha test/* --exit"
   },
   "author": "Florian Hermouet-Joscht",
   "license": "MIT",

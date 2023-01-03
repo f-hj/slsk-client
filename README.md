@@ -2,7 +2,7 @@
 
 <img align="right" src="https://fruitice.fr/logo-slsk.png"/>
 
-[![Build Status](https://travis-ci.org/f-hj/slsk-client.svg?branch=master)](https://travis-ci.org/f-hj/slsk-client)
+[![Build Status](https://github.com/f-hj/slsk-client/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/f-hj/slsk-client/actions/workflows/ci.yml?query=branch%3Amaster)
 [![JavaScript Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://standardjs.com)
 [![GitHub stars](https://img.shields.io/github/stars/f-hj/slsk-client.svg)](https://github.com/f-hj/slsk-client/stargazers)
 
