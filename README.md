@@ -28,6 +28,7 @@ I advise you to sort files by speed and select the best one (OK, speed is sent b
 ## Getting started
 ```js
 const slsk = require('slsk-client')
+
 slsk.connect({
   user: 'username',
   pass: 'password'
