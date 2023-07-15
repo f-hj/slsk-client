@@ -145,10 +145,10 @@ Use env variables for tests
 - `SLSK_USER=MyUsername`
 - `SLSK_PASS=MyPassword`
 
-## Sources
+## Soulseek Protocol Documentation
 
 ftp://ftp.tu-clausthal.de/pub/mirror/ftp.gwdg.de/gnu/ftp/savannah/files/mldonkey/docs/Soulseek/soulseek_protocol.html
 
-https://www.museek-plus.org/wiki/SoulseekProtocol
+https://nicotine-plus.org/doc/SLSKPROTOCOL.html
 
-https://github.com/Nicotine-Plus/nicotine-plus
+https://github.com/nicotine-plus/nicotine-plus
