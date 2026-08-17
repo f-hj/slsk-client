@@ -32,7 +32,7 @@ Implemented in [`src/server.ts`](../src/server.ts) (receive + send helpers) and 
 | 26 | FileSearch (send) | uint32 token, string query | Sends 4 raw token bytes + query; token is an opaque, self-consistent 4-byte value | ✅ |
 | 26 | FileSearch (recv) | user, token, query | Not handled — search requests are only served via the distributed parent (code D/3) | 🟡 |
 | 28 | SetStatus | int32 status | Sends `2` (online) after login | ✅ |
-| 35 | SharedFoldersFiles | uint32 dirs, uint32 files | Sends **hardcoded `1, 1`** regardless of actual shares | 🟡 layout ok, values wrong |
+| 35 | SharedFoldersFiles | uint32 dirs, uint32 files | Sends the real counts of the share index after login, and again on `refreshShares()` | ✅ |
 | 36 | GetUserStats (recv) | user, avgspeed, uploadnum, unknown, files, dirs | Fully parsed, log only | 🟠 |
 | 64 | RoomList (recv) | num, names, **num again**, user counts, then private/owned/operated sections | Reads names, then user counts **without re-reading the second count** → parse is off by 4 bytes from the user-count loop onwards. Log only, so no functional impact | 🟡 misparse |
 | 69 | PrivilegedUsers (recv) | uint32 count, usernames | Reads count, log only | 🟠 |
@@ -61,14 +61,14 @@ Implemented in [`src/peer/default-peer.ts`](../src/peer/default-peer.ts).
 
 | Code | Name | Doc layout | Implementation | Status |
 |------|------|-----------|----------------|--------|
-| 4 | GetShareFileList (recv) | empty | Handled — but responds with a fake list (see code 5) | ✅ |
-| 5 | SharedFileListResponse (send) | **zlib-compressed**: dirs → files (code **1**, name, uint64 size, ext, attrs), unknown, private dirs | Sends a **hardcoded fake** single folder/file, **uncompressed**, without the trailing unknown/private-dir fields | ❌ non-compliant (uncompressed + fake data) |
+| 4 | GetShareFileList (recv) | empty | Handled — answered with the shares of the index (see code 5) | ✅ |
+| 5 | SharedFileListResponse (send) | **zlib-compressed**: dirs → files (code **1**, name, uint64 size, ext, attrs), unknown, private dirs | Real shares of the index, zlib compressed, grouped by folder, file code 1, uint64 sizes, extension and attributes of the entry, trailing unknown + private-dir fields | ✅ |
 | 5 | SharedFileListResponse (recv) | same | Not handled (client never browses shares) | ❌ |
 | 9 | FileSearchResponse (send) | zlib: user, token, n × (code **1**, filename, uint64 size, ext, attrs), bool slotfree, uint32 avgspeed, uint32 queue, uint32 unknown, private results | zlib ✅, file code 1 ✅, real extension ✅, uint64 sizes ✅, slotfree/avgspeed/queue configurable ✅, trailing unknown + private-results count ✅ | ✅ |
 | 9 | FileSearchResponse (recv) | same | zlib ✅; parses user, token, files incl. attributes (bitrate/duration/vbr/… surfaced), uint64 sizes ✅, slotfree, avgspeed, queue length; tolerates truncated trailing fields from older peers | ✅ |
 | 15/16 | UserInfoRequest/Response | — | Not implemented (peers asking for our info get no answer) | ❌ |
-| 36 | FolderContentsRequest (recv) | **uint32 token, string folder** | Misparsed as "number of files" (reads the token as a count), log only; no FolderContentsResponse (37) is sent | ❌ misparse + no response |
-| 37 | FolderContentsResponse | zlib folder listing | Not implemented | ❌ |
+| 36 | FolderContentsRequest (recv) | **uint32 token, string folder** | Parsed as documented and answered with FolderContentsResponse (37) built from the index | ✅ |
+| 37 | FolderContentsResponse | zlib folder listing | Echoes the token and the requested folder, then the folder → files structure, zlib compressed | ✅ |
 | 40 | TransferRequest (send) | dir 0: direction, token, filename | Sent to start downloads (**legacy** initiation — modern flow is QueueUpload 43, but dir-0 requests are still accepted network-wide) | 🟡 deprecated-but-accepted |
 | 40 | TransferRequest (recv) | dir 1 adds **uint64** filesize | Handled; accepts after 200 ms with TransferResponse. Filesize read as **uint64** ✅; dir-0 requests (peer downloading from us) are denied with a reason | ✅ |
 | 41 | TransferResponse (send) | token, bool allowed | Sends `token, 1` (upload flavour, 41b) | ✅ |
@@ -109,7 +109,7 @@ Documented sequence: connect → PeerInit(token 0)/PierceFireWall → downloader
 ## 6. Process-level compliance
 
 ### 6.1 Login — ✅ compliant
-`connect()` → TCP connect → Login(1) → on success SharedFoldersFiles(35), HaveNoParent(71), SetStatus(28), SetWaitPort(2) — matches the documented session bootstrap. Deviations: HaveNoParent flag width (uint32 vs bool) and hardcoded share counts.
+`connect()` → TCP connect → Login(1) → on success SharedFoldersFiles(35), HaveNoParent(71), SetStatus(28), SetWaitPort(2) — matches the documented session bootstrap. Deviation: HaveNoParent flag width was fixed to a single byte; share counts come from the index.
 
 ### 6.2 Peer connection establishment — 🟡 partial
 - **Direct outbound** (P/D after GetPeerAddress/NetInfo): compliant, though the D handshake sends *both* PeerInit and PierceFireWall on connect — the docs prescribe one or the other depending on who initiated.
@@ -129,8 +129,10 @@ The client joins the distributed network as documented (HaveNoParent → NetInfo
 ### 6.5 Download — 🟡 compliant with the *legacy* flow
 Uses TransferRequest(40, direction 0) instead of the modern QueueUpload(43). The docs confirm dir-0 requests are still understood network-wide ("slskd and Seeker still use it"), and both response paths (immediate allow → F connection; deny → wait for the peer's own TransferRequest) are handled. Gaps: UploadDenied(50) doesn't fail the pending download, CantConnectToPeer doesn't either, no queue-place tracking (44/51), no resume.
 
-### 6.6 Upload / sharing — ❌ not compliant (declared out of scope)
-The client answers GetShareFileList with a fake, uncompressed list and advertises hardcoded share counts, but never sends TransferRequest(dir 1), never handles QueueUpload(43), and never serves file data. The README already declares sharing "not implemented"; the fake responses are the only off-spec behavior actively emitted.
+### 6.6 Sharing — ✅ browsing and searching, ❌ uploading
+Shares come from [`ShareProvider`](../src/share/provider.ts) implementations (local file system, memory, or anything a user plugs in) indexed by [`ShareIndex`](../src/share/share-index.ts). What is compliant: real SharedFoldersFiles(35) counts, compressed SharedFileListResponse(5), FolderContentsResponse(37), FileSearchResponse(9) with sizes, extensions and attributes, and virtual `\` separated paths as other clients advertise.
+
+What is still missing is serving the bytes: TransferRequest(dir 1) is never sent, QueueUpload(43) and TransferRequest(dir 0) are answered with a denial, PlaceInQueueRequest(51) answers nothing, and no file connection is ever opened as the uploader. The `read(entry, { start })` side of the provider interface exists for it and is unused so far.
 
 ### 6.7 Chat, rooms, user info, interests — ❌ not implemented (declared out of scope)
 
@@ -152,5 +154,5 @@ Missing protocol behavior (features):
 7. Indirect connection requests (send ConnectToPeer 18) + CantConnectToPeer reporting.
 8. Modern download initiation (QueueUpload 43) and queue tracking (44/51).
 9. Distributed-network upkeep (BranchLevel/BranchRoot to server, HaveNoParent(0), Ping, EmbeddedMessage 93, children).
-10. Real share serving (compressed SharedFileListResponse, FolderContentsResponse, actual uploads) — declared out of scope.
+10. Actual uploads: upload slots and queue (43/44/51), TransferRequest(dir 1), and the uploader side of the file connection. Browsing and searching the shares is implemented (see 6.6).
 11. Download resume (non-zero offset on F connections).

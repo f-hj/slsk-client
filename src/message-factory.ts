@@ -1,8 +1,9 @@
 import crypto from 'crypto'
-import path from 'path'
 import zlib from 'zlib'
 import Message from './message'
-import { FileAttribute, type SharedFileEntry } from './types'
+import { extensionOf, folderOf } from './share/virtual-path'
+import { FileAttribute } from './types'
+import type { ShareEntry } from './share/provider'
 
 export interface FileSearchResultFile {
   user: string
@@ -37,10 +38,10 @@ export interface UserInfoOptions {
 }
 
 /** Groups shared files by folder, as expected by the SharedFileList/FolderContents messages */
-function byFolder (files: SharedFileEntry[]): Map<string, SharedFileEntry[]> {
-  const folders = new Map<string, SharedFileEntry[]>()
+function byFolder (files: ShareEntry[]): Map<string, ShareEntry[]> {
+  const folders = new Map<string, ShareEntry[]>()
   files.forEach(file => {
-    const folder = path.dirname(file.value.file)
+    const folder = folderOf(file.path)
     const entries = folders.get(folder)
     if (entries) {
       entries.push(file)
@@ -52,16 +53,27 @@ function byFolder (files: SharedFileEntry[]): Map<string, SharedFileEntry[]> {
 }
 
 /** Writes a single file entry (code 1, name, size, extension, attributes) */
-function writeFile (msg: Message, file: SharedFileEntry): void {
+function writeFile (msg: Message, file: ShareEntry): void {
+  const attribs = file.attribs
+    ? Object.keys(file.attribs)
+      .map(Number)
+      .filter(code => typeof file.attribs?.[code as FileAttribute] === 'number')
+      .sort((a, b) => a - b)
+    : []
+
   msg.int8(1) // code, always 1 for a file
-  msg.str(file.value.file)
-  msg.int64(file.value.size)
-  msg.str(path.extname(file.value.file).replace(/^\./, ''))
-  msg.int32(0) // number of attributes, unknown without reading the file tags
+  msg.str(file.path)
+  msg.int64(file.size)
+  msg.str(extensionOf(file.path))
+  msg.int32(attribs.length)
+  attribs.forEach(code => {
+    msg.int32(code)
+    msg.int32(file.attribs?.[code as FileAttribute] as number)
+  })
 }
 
 /** Writes the folder → files structure shared by SharedFileList and FolderContents */
-function writeFolders (msg: Message, folders: Map<string, SharedFileEntry[]>): void {
+function writeFolders (msg: Message, folders: Map<string, ShareEntry[]>): void {
   msg.int32(folders.size)
   folders.forEach((entries, folder) => {
     msg.str(folder)
@@ -86,7 +98,7 @@ const MessageFactory = {
           .rawHexStr(token)
       },
       /** SharedFileListResponse (5): the whole payload is zlib compressed */
-      sharedFileList: (files: SharedFileEntry[]): Message => {
+      sharedFileList: (files: ShareEntry[]): Message => {
         const msg = new Message()
         writeFolders(msg, byFolder(files))
         msg.int32(0) // unknown
@@ -97,7 +109,7 @@ const MessageFactory = {
           .writeBuffer(zlib.deflateSync(msg.data))
       },
       /** FolderContentsResponse (37): the whole payload, token included, is zlib compressed */
-      folderContentsResponse: (token: string, folder: string, files: SharedFileEntry[]): Message => {
+      folderContentsResponse: (token: string, folder: string, files: ShareEntry[]): Message => {
         const msg = new Message()
           .rawHexStr(token)
           .int32(1) // number of requested folders in this response
@@ -110,7 +122,7 @@ const MessageFactory = {
           .writeBuffer(zlib.deflateSync(msg.data))
       },
       fileSearchResult: (
-        files: SharedFileEntry[],
+        files: ShareEntry[],
         token: string,
         user: string,
         options: FileSearchResultOptions = {}

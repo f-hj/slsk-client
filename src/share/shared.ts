@@ -1,68 +1,97 @@
 import EventEmitter from 'events'
-import fs from 'fs'
-import { dirname, sep as separator } from 'path'
 import createDebug from 'debug'
-import matches from './matches'
-import type { SharedFileEntry } from '../types'
+import ShareIndex, { type IndexedEntry } from './share-index'
+import fsShareProvider from './providers/fs'
+import type { ShareEntry, ShareProvider } from './provider'
 
 const debug = createDebug('slsk:shared:i')
 
 export interface SharedEvents {
-  file: [file: { path: string[], size: number }]
+  /** Emitted for every file found while listing the providers */
+  file: [file: ShareEntry]
+  /** Emitted once a folder added with scanFolder has been listed */
   complete: [folder: string]
 }
 
+/**
+ * What is shared with the other peers: a {@link ShareIndex} fed by any number of
+ * {@link ShareProvider}, plus the folder scanning helpers kept for the `sharedFolders` option.
+ */
 export default class Shared extends EventEmitter<SharedEvents> {
-  files: SharedFileEntry[] = []
+  private readonly index = new ShareIndex()
+  /** Provider holding the entries set through `files`, created on first use */
+  private staticProvider?: ShareProvider
 
+  /** Every shared file */
+  get files (): ShareEntry[] {
+    return this.index.files
+  }
+
+  /** Replaces the files shared without going through a provider */
+  set files (entries: ShareEntry[]) {
+    if (!this.staticProvider) {
+      this.staticProvider = { name: 'static', list: () => [], read: () => { throw new Error('not readable') } }
+    }
+    this.index.set(this.staticProvider, entries)
+  }
+
+  /** Adds a provider, its files are listed by the next `refresh()` */
+  addProvider (provider: ShareProvider): void {
+    debug(`add provider ${provider.name ?? 'unnamed'}`)
+    this.index.add(provider)
+  }
+
+  /** Shares a folder of the local file system */
+  addFolders (folders: string[]): void {
+    if (folders.length === 0) return
+    this.addProvider(fsShareProvider({ folders }))
+  }
+
+  /** Lists every provider again, to pick up files added or removed since the last listing */
+  async refresh (): Promise<void> {
+    await this.index.refresh()
+  }
+
+  /** Shares a folder of the local file system and lists it right away */
   async scanFolder (folder: string): Promise<void> {
-    let entries: string[]
-    try {
-      entries = await fs.promises.readdir(folder)
-    } catch {
-      debug(`Folder ${folder} does not exist`)
-      return
-    }
-    for (const entry of entries) {
-      await this.scan([folder, entry])
-    }
-    debug(`Scan folder ${folder} completed, ${this.files.length} shared`)
+    const provider = fsShareProvider({ folders: [folder] })
+    this.index.add(provider)
+    await this.index.refresh(provider)
+
+    this.files
+      .filter(entry => this.index.resolve(entry.path)?.provider === provider)
+      .forEach(entry => this.emit('file', entry))
+
+    debug(`Scan folder ${folder} completed, ${this.index.stats().files} shared`)
     this.emit('complete', folder)
   }
 
-  private async scan (path: string[]): Promise<void> {
-    const file = path.join(separator)
-    const stats = await fs.promises.stat(file)
-    if (stats.isFile()) {
-      const entry: SharedFileEntry = {
-        key: path.slice(Math.max(path.length - 2, 1)).join(separator),
-        value: {
-          file,
-          size: stats.size
-        }
-      }
-      this.files.push(entry)
-      this.emit('file', { path, size: stats.size })
-    } else {
-      const entries = await fs.promises.readdir(file)
-      for (const it of entries) {
-        await this.scan(path.concat([it]))
-      }
-    }
+  /** Files matching a search query */
+  async search (query: string): Promise<ShareEntry[]> {
+    return await this.index.search(query)
   }
 
-  search (query: string): SharedFileEntry[] {
-    return this.files.filter(it => matches(it.key, query))
+  /** Finds a shared file from the path a peer sent back */
+  resolve (path: string): IndexedEntry | undefined {
+    return this.index.resolve(path)
   }
 
   /** Distinct folders containing at least one shared file */
   folders (): string[] {
-    return [...new Set(this.files.map(it => dirname(it.value.file)))]
+    return this.index.folders()
   }
 
   /** Shared files of a folder, as requested by a peer browsing our shares */
-  filesInFolder (folder: string): SharedFileEntry[] {
-    const requested = folder.replace(/[/\\]+$/, '')
-    return this.files.filter(it => dirname(it.value.file) === requested)
+  filesInFolder (folder: string): ShareEntry[] {
+    return this.index.filesInFolder(folder)
+  }
+
+  /** Counts announced to the server with SharedFoldersFiles */
+  stats (): { folders: number, files: number } {
+    return this.index.stats()
+  }
+
+  async close (): Promise<void> {
+    await this.index.close()
   }
 }

@@ -3,7 +3,8 @@ import type net from 'net'
 import createDebug from 'debug'
 import MessageFactory, { type FileSearchResultOptions } from '../message-factory'
 import type Message from '../message'
-import type { PeerInfo, SharedFileEntry } from '../types'
+import type { PeerInfo } from '../types'
+import type { ShareEntry } from '../share/provider'
 
 const debug = createDebug('slsk:peer:i')
 
@@ -86,7 +87,7 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
   }
 
   fileSearchResult (
-    files: SharedFileEntry[],
+    files: ShareEntry[],
     token: string,
     user: string,
     options?: FileSearchResultOptions

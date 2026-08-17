@@ -1,7 +1,7 @@
 import assert from 'assert'
 import fs from 'fs'
 import crypto from 'crypto'
-import slsk, { SlskClient } from '../src/index'
+import slsk, { FileAttribute, memoryShareProvider, SlskClient } from '../src/index'
 import MockServer, { type LoginEvent } from './mock-server'
 import MockDistributedPeer, { type PeerInitEvent } from './mock-distributed-peer'
 import MockDefaultPeer from './mock-default-peer'
@@ -57,13 +57,25 @@ describe('file-sharing', () => {
       pass: 'any',
       host: serverAddress.host,
       port: serverAddress.port,
-      sharedFolders: [baseFolder]
+      sharedFolders: [baseFolder],
+      // a share that is not on the local file system, answered from the same index
+      shares: memoryShareProvider([
+        { path: 'bucket\\remote song.flac', data: 'remote data', attribs: { [FileAttribute.Bitrate]: 1411 } }
+      ])
     })
 
     const result = await fileSearchResult
     const file = result.files[0]
-    assert.strictEqual(file.file, baseFolder + '/great song.mp3')
+    // peers see a virtual path rooted at the shared folder, not the local one
+    assert.strictEqual(file.file, 'file-sharing\\great song.mp3')
     assert.strictEqual(file.size, 4)
     assert.strictEqual(file.user, 'any')
+
+    const remote = result.files[1]
+    assert.strictEqual(remote.file, 'bucket\\remote song.flac')
+    assert.strictEqual(remote.size, 11)
+    assert.deepStrictEqual(remote.attribs, { [FileAttribute.Bitrate]: 1411 })
+
+    assert.deepStrictEqual(client.shares.stats(), { folders: 2, files: 2 })
   })
 })

@@ -1,9 +1,17 @@
 import fs from 'fs'
 import SlskClient from './slsk-client'
+import fsShareProvider from './share/providers/fs'
+import memoryShareProvider from './share/providers/memory'
+import Shared from './share/shared'
+import ShareIndex from './share/share-index'
 import type { ConnectOptions, ServerAddress } from './types'
 
 export * from './types'
-export { SlskClient }
+export * from './share/provider'
+export type { FsLike, FsLikeFileHandle, FsLikeStats, FsShareProviderOptions } from './share/providers/fs'
+export type { MemoryShareFile } from './share/providers/memory'
+export type { IndexedEntry } from './share/share-index'
+export { SlskClient, Shared, ShareIndex, fsShareProvider, memoryShareProvider }
 
 let client: SlskClient | undefined
 
@@ -20,8 +28,9 @@ export async function connect (obj: ConnectOptions): Promise<SlskClient> {
   }
 
   const sharedFolders = obj.sharedFolders || []
+  const shares = obj.shares ? (Array.isArray(obj.shares) ? obj.shares : [obj.shares]) : []
 
-  client = new SlskClient(serverAddress, sharedFolders)
+  client = new SlskClient(serverAddress, sharedFolders, shares)
   try {
     await client.init()
     await client.login(obj)

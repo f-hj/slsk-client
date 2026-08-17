@@ -1,5 +1,6 @@
 import type { Readable } from 'stream'
-import type { Download, SearchResult, SharedFileEntry } from './types'
+import type { Download, SearchResult } from './types'
+import type { ShareEntry } from './share/provider'
 
 export interface PendingSearch {
   cb: (res: SearchResult) => void
@@ -33,7 +34,7 @@ export interface Stack {
   search: Record<string, PendingSearch>
   download: Record<string, PendingDownload>
   downloadTokens: Record<string, DownloadToken>
-  peerSearchMatches: Record<string, Record<string, SharedFileEntry[]>>
+  peerSearchMatches: Record<string, Record<string, ShareEntry[]>>
   peerSearchRequests: string[]
 }
 

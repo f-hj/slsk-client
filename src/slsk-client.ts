@@ -10,6 +10,7 @@ import downloadPeerFile, { attachFileTransfer } from './peer/download-peer-file'
 import Listen from './listen'
 import Shared from './share/shared'
 import stack, { downloadKey } from './stack'
+import type { ShareProvider } from './share/provider'
 import type {
   ConnectOptions,
   Download,
@@ -55,12 +56,18 @@ export default class SlskClient extends EventEmitter<SlskClientEvents> {
 
   constructor (
     readonly serverAddress: ServerAddress,
-    readonly sharedFolders: string[]
+    readonly sharedFolders: string[],
+    readonly shareProviders: ShareProvider[] = []
   ) {
     super()
   }
 
-  /** Connects to the slsk server and scans the shared folders */
+  /** What is shared with the other peers */
+  get shares (): Shared {
+    return this.shared
+  }
+
+  /** Connects to the slsk server and lists the shared folders and providers */
   async init (): Promise<void> {
     debug('Init client')
     this.server = new Server(this.serverAddress)
@@ -91,10 +98,27 @@ export default class SlskClient extends EventEmitter<SlskClientEvents> {
     })
 
     this.shared = new Shared()
+    this.shared.addFolders(this.sharedFolders)
+    this.shareProviders.forEach(provider => this.shared.addProvider(provider))
 
     await this.server.ready
-    await Promise.all(this.sharedFolders.map(folder => this.shared.scanFolder(folder)))
-    this.server.sharedFoldersFiles(this.shared.folders().length, this.shared.files.length)
+    await this.shared.refresh()
+    this.announceShares()
+  }
+
+  /**
+   * Lists the shares again and tells the server how much is shared, to pick up files added
+   * or removed since the last listing.
+   */
+  async refreshShares (): Promise<void> {
+    await this.shared.refresh()
+    this.announceShares()
+  }
+
+  private announceShares (): void {
+    const stats = this.shared.stats()
+    debug(`sharing ${stats.files} files in ${stats.folders} folders`)
+    this.server.sharedFoldersFiles(stats.folders, stats.files)
   }
 
   private createDefaultPeer (socket: net.Socket, peer: PeerInfo, initialData?: Buffer): DefaultPeer {
@@ -123,6 +147,7 @@ export default class SlskClient extends EventEmitter<SlskClientEvents> {
         distributedPeer.on('socket-error', err => this.emit('peer-error', err, peer.user))
         distributedPeer.on('search', search => {
           this.answerSearchRequest(search.user, search.ticket, search.query)
+            .catch(err => debug(`cannot answer the search of ${search.user}: ${String(err)}`))
         })
         distributedPeer.on('branch-level', level => {
           // we have a parent, tell the server where we sit in the distributed network
@@ -147,8 +172,8 @@ export default class SlskClient extends EventEmitter<SlskClientEvents> {
     }
   }
 
-  private answerSearchRequest (user: string, ticket: string, query: string): void {
-    const matched = this.shared.search(query)
+  private async answerSearchRequest (user: string, ticket: string, query: string): Promise<void> {
+    const matched = await this.shared.search(query)
     if (matched.length === 0) return
 
     if (!this.peers[user]) {
@@ -472,6 +497,9 @@ export default class SlskClient extends EventEmitter<SlskClientEvents> {
   destroy (): void {
     if (this.server) this.server.destroy()
     if (this.listen) this.listen.destroy()
+    if (this.shared) {
+      this.shared.close().catch(err => debug(`cannot close the shares: ${String(err)}`))
+    }
 
     Object.keys(this.peers).forEach(peer => {
       this.peers[peer].destroy()

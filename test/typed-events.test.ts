@@ -53,7 +53,7 @@ export function compileTimeChecks (): void {
 
   const shared = null as unknown as Shared
   shared.on('complete', folder => folder.toLowerCase())
-  shared.on('file', file => file.path.join('/') + file.size)
+  shared.on('file', file => file.path.toLowerCase() + file.size)
   // @ts-expect-error complete must be emitted with the folder name
   shared.emit('complete', 42)
 

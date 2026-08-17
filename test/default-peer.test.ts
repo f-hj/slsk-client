@@ -6,7 +6,8 @@ import Message from '../src/message'
 import Messages from '../src/messages'
 import Shared from '../src/share/shared'
 import stack, { downloadKey } from '../src/stack'
-import { FileAttribute, type SearchResult, type SharedFileEntry } from '../src/types'
+import { FileAttribute, type SearchResult } from '../src/types'
+import type { ShareEntry } from '../src/share/provider'
 
 interface Pair {
   /** Socket given to the DefaultPeer under test */
@@ -61,9 +62,10 @@ describe('class DefaultPeer', () => {
   let peer: DefaultPeer
 
   const shared = new Shared()
-  const sharedFile: SharedFileEntry = {
-    key: 'great song.mp3',
-    value: { file: '/music/great song.mp3', size: 4 }
+  const sharedFile: ShareEntry = {
+    path: 'music\\great song.mp3',
+    size: 4,
+    id: '/tmp/music/great song.mp3'
   }
 
   beforeEach(async () => {
@@ -182,10 +184,10 @@ describe('class DefaultPeer', () => {
 
     const payload = new Message(zlib.inflateSync(answer.data.subarray(8)))
     assert.strictEqual(payload.int32(), 1) // one folder
-    assert.strictEqual(payload.str(), '/music')
+    assert.strictEqual(payload.str(), 'music')
     assert.strictEqual(payload.int32(), 1) // one file
     assert.strictEqual(payload.int8(), 1) // file code
-    assert.strictEqual(payload.str(), '/music/great song.mp3')
+    assert.strictEqual(payload.str(), 'music\\great song.mp3')
     assert.strictEqual(payload.int64(), 4)
   })
 
@@ -193,7 +195,7 @@ describe('class DefaultPeer', () => {
     pair.remote.write(new Message()
       .int32(36) // FolderContentsRequest
       .rawHexStr('0a0b0c0d')
-      .str('/music')
+      .str('music')
       .getBuff())
 
     const answer = await pair.next()
@@ -203,12 +205,12 @@ describe('class DefaultPeer', () => {
     const payload = new Message(zlib.inflateSync(answer.data.subarray(8)))
     assert.strictEqual(payload.rawHexStr(4), '0a0b0c0d')
     assert.strictEqual(payload.int32(), 1) // one requested folder
-    assert.strictEqual(payload.str(), '/music')
+    assert.strictEqual(payload.str(), 'music')
     assert.strictEqual(payload.int32(), 1) // one folder in it
-    assert.strictEqual(payload.str(), '/music')
+    assert.strictEqual(payload.str(), 'music')
     assert.strictEqual(payload.int32(), 1) // one file
     payload.int8()
-    assert.strictEqual(payload.str(), '/music/great song.mp3')
+    assert.strictEqual(payload.str(), 'music\\great song.mp3')
   })
 
   it('surfaces the file attributes of a search result', async () => {

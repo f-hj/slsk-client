@@ -1,4 +1,5 @@
 import type { Readable } from 'stream'
+import type { ShareProvider } from './share/provider'
 
 export interface ServerAddress {
   host: string
@@ -16,8 +17,13 @@ export interface ConnectOptions {
   port?: number
   /** Port used for incoming peer connections (default: 2234) */
   incomingPort?: number
-  /** Folders to be shared with other peers (default: []) */
+  /** Folders of the local file system to be shared with other peers (default: []) */
   sharedFolders?: string[]
+  /**
+   * Share providers, to share files that do not come from the local file system
+   * (object storage, database, remote API...). Used on top of `sharedFolders`.
+   */
+  shares?: ShareProvider | ShareProvider[]
   /** Time in ms after which the login attempt fails (default: 2000) */
   timeout?: number
 }
@@ -139,6 +145,10 @@ export interface PeerSearchRequest {
   query: string
 }
 
+/**
+ * @deprecated shared files are described by `ShareEntry` since the share providers were
+ * introduced, this type is only kept so imports of older versions still compile.
+ */
 export interface SharedFileEntry {
   key: string
   value: {

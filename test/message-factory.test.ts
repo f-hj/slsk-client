@@ -3,7 +3,7 @@ import crypto from 'crypto'
 import zlib from 'zlib'
 import Message from '../src/message'
 import MessageFactory from '../src/message-factory'
-import type { SharedFileEntry } from '../src/types'
+import type { ShareEntry } from '../src/share/provider'
 
 describe('MessageFactory', () => {
   describe('to.server', () => {
@@ -107,10 +107,10 @@ describe('MessageFactory', () => {
     })
 
     it('builds a compressed sharedFileList grouped by folder', () => {
-      const files: SharedFileEntry[] = [
-        { key: 'great song.mp3', value: { file: '/music/great song.mp3', size: 1234 } },
-        { key: 'other song.mp3', value: { file: '/music/other song.mp3', size: 5678 } },
-        { key: 'live/encore.flac', value: { file: '/music/live/encore.flac', size: 9 } }
+      const files: ShareEntry[] = [
+        { path: 'music\\great song.mp3', size: 1234 },
+        { path: 'music\\other song.mp3', size: 5678 },
+        { path: 'music\\live\\encore.flac', size: 9 }
       ]
 
       const buff = MessageFactory.to.peer.sharedFileList(files).getBuff()
@@ -121,23 +121,23 @@ describe('MessageFactory', () => {
       const payload = new Message(zlib.inflateSync(buff.subarray(8)))
       assert.strictEqual(payload.int32(), 2) // two folders
 
-      assert.strictEqual(payload.str(), '/music')
+      assert.strictEqual(payload.str(), 'music')
       assert.strictEqual(payload.int32(), 2) // two files
       assert.strictEqual(payload.int8(), 1) // file code, 1 as documented
-      assert.strictEqual(payload.str(), '/music/great song.mp3')
+      assert.strictEqual(payload.str(), 'music\\great song.mp3')
       assert.strictEqual(payload.int64(), 1234)
       assert.strictEqual(payload.str(), 'mp3')
       assert.strictEqual(payload.int32(), 0) // no attribute
       payload.int8()
-      assert.strictEqual(payload.str(), '/music/other song.mp3')
+      assert.strictEqual(payload.str(), 'music\\other song.mp3')
       assert.strictEqual(payload.int64(), 5678)
       assert.strictEqual(payload.str(), 'mp3')
       assert.strictEqual(payload.int32(), 0)
 
-      assert.strictEqual(payload.str(), '/music/live')
+      assert.strictEqual(payload.str(), 'music\\live')
       assert.strictEqual(payload.int32(), 1)
       payload.int8()
-      assert.strictEqual(payload.str(), '/music/live/encore.flac')
+      assert.strictEqual(payload.str(), 'music\\live\\encore.flac')
       assert.strictEqual(payload.int64(), 9)
       assert.strictEqual(payload.str(), 'flac')
       assert.strictEqual(payload.int32(), 0)
@@ -147,11 +147,11 @@ describe('MessageFactory', () => {
     })
 
     it('builds a compressed folderContentsResponse for the requested folder', () => {
-      const files: SharedFileEntry[] = [
-        { key: 'great song.mp3', value: { file: '/music/great song.mp3', size: 1234 } }
+      const files: ShareEntry[] = [
+        { path: 'music\\great song.mp3', size: 1234 }
       ]
 
-      const buff = MessageFactory.to.peer.folderContentsResponse('0a0b0c0d', '/music', files).getBuff()
+      const buff = MessageFactory.to.peer.folderContentsResponse('0a0b0c0d', 'music', files).getBuff()
       const msg = new Message(buff)
       msg.int32() // size
       assert.strictEqual(msg.int32(), 37) // code
@@ -159,12 +159,12 @@ describe('MessageFactory', () => {
       const payload = new Message(zlib.inflateSync(buff.subarray(8)))
       assert.strictEqual(payload.rawHexStr(4), '0a0b0c0d')
       assert.strictEqual(payload.int32(), 1) // one requested folder
-      assert.strictEqual(payload.str(), '/music')
+      assert.strictEqual(payload.str(), 'music')
       assert.strictEqual(payload.int32(), 1) // one folder in it
-      assert.strictEqual(payload.str(), '/music')
+      assert.strictEqual(payload.str(), 'music')
       assert.strictEqual(payload.int32(), 1) // one file
       assert.strictEqual(payload.int8(), 1)
-      assert.strictEqual(payload.str(), '/music/great song.mp3')
+      assert.strictEqual(payload.str(), 'music\\great song.mp3')
       assert.strictEqual(payload.int64(), 1234)
     })
   })
@@ -217,9 +217,9 @@ describe('MessageFactory', () => {
 
   describe('fileSearchResult roundtrip', () => {
     it('parses back what it builds', () => {
-      const files: SharedFileEntry[] = [
-        { key: 'great song.mp3', value: { file: '/music/great song.mp3', size: 1234 } },
-        { key: 'other song.mp3', value: { file: '/music/other song.mp3', size: 5678 } }
+      const files: ShareEntry[] = [
+        { path: 'music\\great song.mp3', size: 1234 },
+        { path: 'music\\other song.mp3', size: 5678 }
       ]
       const token = '0a0b0c0d'
 
@@ -236,21 +236,21 @@ describe('MessageFactory', () => {
       assert.strictEqual(parsed.files.length, 2)
       assert.deepStrictEqual(parsed.files[0], {
         user: 'alice',
-        file: '/music/great song.mp3',
+        file: 'music\\great song.mp3',
         size: 1234,
         attribs: {}
       })
       assert.deepStrictEqual(parsed.files[1], {
         user: 'alice',
-        file: '/music/other song.mp3',
+        file: 'music\\other song.mp3',
         size: 5678,
         attribs: {}
       })
     })
 
     it('keeps the advertised slots, speed and queue length', () => {
-      const files: SharedFileEntry[] = [
-        { key: 'great song.mp3', value: { file: '/music/great song.mp3', size: 1234 } }
+      const files: ShareEntry[] = [
+        { path: 'music\\great song.mp3', size: 1234 }
       ]
 
       const buff = MessageFactory.to.peer.fileSearchResult(files, '0a0b0c0d', 'alice', {
@@ -267,8 +267,8 @@ describe('MessageFactory', () => {
 
     it('roundtrips a file bigger than 4 GiB', () => {
       const size = 6 * 1024 * 1024 * 1024 // 6 GiB, does not fit in a uint32
-      const files: SharedFileEntry[] = [
-        { key: 'dj set.flac', value: { file: '/music/dj set.flac', size } }
+      const files: ShareEntry[] = [
+        { path: 'music\\dj set.flac', size }
       ]
 
       const buff = MessageFactory.to.peer.fileSearchResult(files, '0a0b0c0d', 'alice').getBuff()
@@ -278,8 +278,8 @@ describe('MessageFactory', () => {
     })
 
     it('parses a result of a peer that stops after the file list', () => {
-      const files: SharedFileEntry[] = [
-        { key: 'great song.mp3', value: { file: '/music/great song.mp3', size: 1234 } }
+      const files: ShareEntry[] = [
+        { path: 'music\\great song.mp3', size: 1234 }
       ]
 
       const buff = MessageFactory.to.peer.fileSearchResult(files, '0a0b0c0d', 'alice').getBuff()
