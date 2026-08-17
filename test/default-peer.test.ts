@@ -1,12 +1,12 @@
 import assert from 'assert'
 import net from 'net'
 import zlib from 'zlib'
-import DefaultPeer from '../src/peer/default-peer'
-import Message from '../src/message'
-import Messages from '../src/messages'
+import DefaultPeer, { type TransferRequestEvent, type TransferResponseEvent } from '../src/peer/default-peer/default-peer'
+import Message from '../src/utils/message'
+import Messages from '../src/utils/messages'
 import Shared from '../src/share/shared'
-import stack, { downloadKey } from '../src/stack'
-import { FileAttribute, type SearchResult } from '../src/types'
+import Session from '../src/session'
+import type { FileSearchResult } from '../src/peer/default-peer/messages'
 import type { ShareEntry } from '../src/share/provider'
 
 interface Pair {
@@ -62,6 +62,7 @@ describe('class DefaultPeer', () => {
   let peer: DefaultPeer
 
   const shared = new Shared()
+  const session = new Session()
   const sharedFile: ShareEntry = {
     path: 'music\\great song.mp3',
     size: 4,
@@ -69,21 +70,20 @@ describe('class DefaultPeer', () => {
   }
 
   beforeEach(async () => {
+    session.username = 'me'
     shared.files = [sharedFile]
     pair = await connectedPair()
-    peer = new DefaultPeer(pair.local, { user }, { shared })
+    peer = new DefaultPeer(pair.local, { user }, { session, shared })
   })
 
   afterEach(() => {
     peer.destroy()
     pair.close()
-    delete stack.download[downloadKey(user, file)]
-    stack.downloadTokens = {}
   })
 
-  it('rejects the pending download when the peer denies the upload', async () => {
-    const pending = new Promise<void>((resolve, reject) => {
-      stack.download[downloadKey(user, file)] = { resolve: () => resolve(), reject }
+  it('reports an upload the peer refuses', async () => {
+    const denied = new Promise<{ file: string, reason: string }>(resolve => {
+      peer.once('upload-denied', resolve)
     })
 
     pair.remote.write(new Message()
@@ -92,26 +92,23 @@ describe('class DefaultPeer', () => {
       .str('Queue full')
       .getBuff())
 
-    await assert.rejects(pending, { message: 'Queue full' })
-    assert.strictEqual(stack.download[downloadKey(user, file)], undefined, 'the download must be forgotten')
+    assert.deepStrictEqual(await denied, { file, reason: 'Queue full' })
   })
 
-  it('rejects the pending download when the upload fails', async () => {
-    const pending = new Promise<void>((resolve, reject) => {
-      stack.download[downloadKey(user, file)] = { resolve: () => resolve(), reject }
-    })
+  it('reports an upload the peer gave up on', async () => {
+    const failed = new Promise<string>(resolve => peer.once('upload-failed', resolve))
 
     pair.remote.write(new Message()
       .int32(46) // UploadFailed
       .str(file)
       .getBuff())
 
-    await assert.rejects(pending, { message: 'Peer error' })
+    assert.strictEqual(await failed, file)
   })
 
   it('reports the place in the upload queue', async () => {
-    const place = new Promise<number>(resolve => {
-      stack.download[downloadKey(user, file)] = { onQueue: resolve }
+    const place = new Promise<{ file: string, place: number }>(resolve => {
+      peer.once('place-in-queue', resolve)
     })
 
     pair.remote.write(new Message()
@@ -120,11 +117,14 @@ describe('class DefaultPeer', () => {
       .int32(7)
       .getBuff())
 
-    assert.strictEqual(await place, 7)
+    assert.deepStrictEqual(await place, { file, place: 7 })
   })
 
-  it('accepts an announced upload and keeps its 64 bit size', async () => {
+  it('reports an announced upload and keeps its 64 bit size', async () => {
     const size = 6 * 1024 * 1024 * 1024 // 6 GiB, does not fit in a uint32
+    const request = new Promise<TransferRequestEvent>(resolve => {
+      peer.once('transfer-request', resolve)
+    })
 
     pair.remote.write(new Message()
       .int32(40) // TransferRequest
@@ -134,22 +134,59 @@ describe('class DefaultPeer', () => {
       .int64(size)
       .getBuff())
 
-    const answer = await pair.next()
-    answer.int32() // size
-    assert.strictEqual(answer.int32(), 41) // TransferResponse
-    assert.strictEqual(answer.rawHexStr(4), 'cafed00d')
-    assert.strictEqual(answer.int8(), 1) // allowed
-
-    assert.deepStrictEqual(stack.downloadTokens.cafed00d, { user, file, size })
+    assert.deepStrictEqual(await request, {
+      direction: 1,
+      token: 'cafed00d',
+      file,
+      size
+    } satisfies TransferRequestEvent)
   })
 
-  it('denies a download request, uploading is not supported', async () => {
+  it('reports a download request without size, the client answers it', async () => {
+    const request = new Promise<TransferRequestEvent>(resolve => {
+      peer.once('transfer-request', resolve)
+    })
+
     pair.remote.write(new Message()
       .int32(40) // TransferRequest
       .int32(0) // direction: the peer wants to download from us
       .rawHexStr('cafed00d')
       .str(file)
       .getBuff())
+
+    assert.deepStrictEqual(await request, {
+      direction: 0,
+      token: 'cafed00d',
+      file,
+      size: undefined
+    } satisfies TransferRequestEvent)
+  })
+
+  it('reports the answer of the peer to a transfer, with its reason when refused', async () => {
+    const allowed = new Promise<TransferResponseEvent>(resolve => {
+      peer.once('transfer-response', resolve)
+    })
+    pair.remote.write(new Message()
+      .int32(41)
+      .rawHexStr('cafed00d')
+      .int8(1)
+      .getBuff())
+    assert.deepStrictEqual(await allowed, { token: 'cafed00d', allowed: true, reason: undefined })
+
+    const refused = new Promise<TransferResponseEvent>(resolve => {
+      peer.once('transfer-response', resolve)
+    })
+    pair.remote.write(new Message()
+      .int32(41)
+      .rawHexStr('0a0b0c0d')
+      .int8(0)
+      .str('Queued')
+      .getBuff())
+    assert.deepStrictEqual(await refused, { token: '0a0b0c0d', allowed: false, reason: 'Queued' })
+  })
+
+  it('sends the transfer response the client asks for', async () => {
+    peer.transferResponse('cafed00d', false, 'Cancelled')
 
     const answer = await pair.next()
     answer.int32() // size
@@ -213,24 +250,19 @@ describe('class DefaultPeer', () => {
     assert.strictEqual(payload.str(), 'music\\great song.mp3')
   })
 
-  it('surfaces the file attributes of a search result', async () => {
-    const token = '0a0b0c0d'
-    const result = new Promise<SearchResult>(resolve => {
-      stack.search[token] = { cb: resolve, query: 'great song' }
-    })
+  it('reports a search result with its attributes', async () => {
+    const received = new Promise<FileSearchResult>(resolve => peer.once('search-result', resolve))
 
     const payload = new Message()
       .str(user)
-      .rawHexStr(token)
+      .rawHexStr('0a0b0c0d')
       .int32(1) // one file
       .int8(1) // file code
       .str(file)
       .int64(4)
       .str('mp3')
-      .int32(3) // three attributes
-      .int32(FileAttribute.Bitrate).int32(320)
-      .int32(FileAttribute.Duration).int32(214)
-      .int32(FileAttribute.VBR).int32(1)
+      .int32(1) // one attribute
+      .int32(0).int32(320) // bitrate
       .int8(1) // free slot
       .int32(4242) // speed
       .int32(3) // queue length
@@ -240,26 +272,12 @@ describe('class DefaultPeer', () => {
       .writeBuffer(zlib.deflateSync(payload.data))
       .getBuff())
 
-    assert.deepStrictEqual(await result, {
-      user,
-      file,
-      size: 4,
-      slots: true,
-      bitrate: 320,
-      duration: 214,
-      vbr: true,
-      sampleRate: undefined,
-      bitDepth: undefined,
-      attribs: {
-        [FileAttribute.Bitrate]: 320,
-        [FileAttribute.Duration]: 214,
-        [FileAttribute.VBR]: 1
-      },
-      speed: 4242,
-      queueLength: 3
-    } satisfies SearchResult)
-
-    delete stack.search[token]
+    const result = await received
+    assert.strictEqual(result.currentToken, '0a0b0c0d')
+    assert.strictEqual(result.slots, 1)
+    assert.strictEqual(result.speed, 4242)
+    assert.strictEqual(result.queueLength, 3)
+    assert.deepStrictEqual(result.files, [{ user, file, size: 4, attribs: { 0: 320 } }])
   })
 
   it('answers a user info request', async () => {

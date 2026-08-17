@@ -1,6 +1,6 @@
 import assert from 'assert'
-import Messages from '../src/messages'
-import Message from '../src/message'
+import Messages from '../src/utils/messages'
+import Message from '../src/utils/message'
 
 describe('class Messages', () => {
   it('must parse one message correctly', () => {

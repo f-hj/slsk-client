@@ -6,14 +6,14 @@
  * Nothing here runs any network code: the emitters are never instantiated.
  */
 
-import Server from '../src/server'
+import Server from '../src/server/server'
 import Listen from '../src/listen'
-import DefaultPeer from '../src/peer/default-peer'
-import DistributedPeer from '../src/peer/distributed-peer'
+import DefaultPeer from '../src/peer/default-peer/default-peer'
+import DistributedPeer from '../src/peer/distributed-peer/distributed-peer'
 import Shared from '../src/share/shared'
-import Messages from '../src/messages'
-import Message from '../src/message'
-import { SlskClient } from '../src/index'
+import Messages from '../src/utils/messages'
+import Message from '../src/utils/message'
+import { Download, SlskClient } from '../src/index'
 import MockServer from './mock-server'
 import MockDistributedPeer from './mock-distributed-peer'
 import MockDefaultPeer from './mock-default-peer'
@@ -22,6 +22,7 @@ import MockUploadPeer from './mock-upload-peer'
 // never called, only type checked
 export function compileTimeChecks (): void {
   const server = null as unknown as Server
+  server.on('login', result => (result.success ? result.greet : result.reason).toLowerCase())
   server.on('connect-to-peer', peer => peer.user.toLowerCase())
   server.on('get-peer-address', peer => peer.host)
   server.on('cant-connect-to-peer', evt => evt.token.toLowerCase())
@@ -40,6 +41,12 @@ export function compileTimeChecks (): void {
   const defaultPeer = null as unknown as DefaultPeer
   defaultPeer.on('disconnect', () => {})
   defaultPeer.on('socket-error', err => err.message)
+  defaultPeer.on('search-result', result => result.files.length + result.slots)
+  defaultPeer.on('transfer-request', evt => evt.direction + evt.token + (evt.size ?? 0))
+  defaultPeer.on('transfer-response', evt => evt.allowed || evt.reason === 'Queued')
+  defaultPeer.on('place-in-queue', evt => evt.file + evt.place)
+  defaultPeer.on('upload-failed', file => file.toLowerCase())
+  defaultPeer.on('upload-denied', evt => evt.file + evt.reason)
   // @ts-expect-error a default peer never emits search requests
   defaultPeer.on('search', () => {})
 
@@ -61,6 +68,16 @@ export function compileTimeChecks (): void {
   msgs.on('message', msg => msg.int32())
   msgs.once('message', msg => msg.int32())
   msgs.emit('message', null as unknown as Message)
+
+  const download = null as unknown as Download
+  download.on('status', status => status.toLowerCase())
+  download.on('queue', place => place + 1)
+  download.on('progress', progress => progress.receivedBytes)
+  download.on('data', chunk => chunk.length)
+  download.on('complete', result => result.path + result.receivedBytes)
+  download.on('failed', err => err.message)
+  // @ts-expect-error a download reports failures with `failed`, not `error`
+  download.on('error', () => {})
 
   const client = null as unknown as SlskClient
   client.on('found', res => res.size + res.speed)

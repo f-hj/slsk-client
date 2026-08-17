@@ -1,11 +1,12 @@
 import assert from 'assert'
 import fs from 'fs'
 import crypto from 'crypto'
-import slsk, { FileAttribute, memoryShareProvider, SlskClient } from '../src/index'
+import { FileAttribute, memoryShareProvider, SlskClient } from '../src/index'
+import connectClient from './connect-client'
 import MockServer, { type LoginEvent } from './mock-server'
 import MockDistributedPeer, { type PeerInitEvent } from './mock-distributed-peer'
 import MockDefaultPeer from './mock-default-peer'
-import type { FileSearchResult } from '../src/message-factory'
+import type { FileSearchResult } from '../src/peer/default-peer/messages'
 
 describe('file-sharing', () => {
   const baseFolder = '/tmp/slsk-client/file-sharing'
@@ -52,7 +53,7 @@ describe('file-sharing', () => {
       mockDefaultPeer.once('file-search-result', resolve)
     })
 
-    client = await slsk.connect({
+    client = await connectClient({
       user: 'any',
       pass: 'any',
       host: serverAddress.host,

@@ -30,13 +30,10 @@ I advise you to sort files by speed and select the best one (OK, speed is sent b
 
 ## Getting started
 ```ts
-import slsk from 'slsk-client'
-// or: const slsk = require('slsk-client')
+import { SlskClient } from 'slsk-client'
 
-const client = await slsk.connect({
-  user: 'username',
-  pass: 'password'
-})
+const client = new SlskClient()
+await client.login('username', 'password')
 
 const res = await client.search({
   req: 'random',
@@ -61,23 +58,43 @@ const data = await client.download({
 ```
 
 ## API
-### slsk
-#### connect(options): Promise\<SlskClient\>
-##### options
-| key | required | value | default | note |
-|-----|----------|-------|---------|------|
-|user| true |Your username|
-|pass| true| Your password|
-|host||choose a different host for Slsk server|server.slsknet.org|
-|port||choose a different port|2242|
-|incomingPort||Port used for incoming connection|2234|
-|sharedFolders||Folders of the local file system to be shared|[]|
-|shares||One or more [share providers](#sharing), for files that are not on the local file system|[]|
-|timeout||Time in ms before the login attempt fails|2000|
-
-Resolves with a client (see just here ⬇), rejects when the connection fails, the credentials are refused or the login times out.
-
 ### client
+#### new SlskClient(options?)
+
+Everything but the credentials is configured here, once.
+
+```ts
+const client = new SlskClient({ sharedFolders: ['/home/me/music'] })
+```
+
+##### options
+| key | value | default | note |
+|-----|-------|---------|------|
+|host|choose a different host for Slsk server|server.slsknet.org|
+|port|choose a different port|2242|
+|incomingPort|Port used for incoming connection|2234|
+|sharedFolders|Folders of the local file system to be shared|[]|
+|shares|One or more [share providers](#sharing), for files that are not on the local file system|[]|
+|timeout|Time in ms before the login attempt fails|2000|
+
+#### login(user, pass): Promise\<void\>
+
+Connects to the slsk server, lists the shares, starts listening for incoming peer connections
+and logs in: everything the client needs to be usable, so this is the only call to make.
+
+Rejects when the connection fails, the credentials are refused, or the server did not answer the
+login before `timeout` ms. Destroy the client when it rejects.
+
+```ts
+const client = new SlskClient()
+try {
+  await client.login('username', 'password')
+} catch (err) {
+  client.destroy()
+  throw err
+}
+```
+
 #### search(options): Promise\<SearchResult[]\>
 ##### options
 | key | required | value | default | note |
@@ -120,7 +137,7 @@ client.on('found', res => {}) // any search result
 client.on(`found:${req}`, res => {}) // or only a specific request
 ```
 
-#### download(options): Promise\<Download\>
+#### download(options): Promise\<DownloadResult\>
 
 Resolves with the buffered file once it is completely downloaded. (Stored in RAM)
 
@@ -150,6 +167,33 @@ const offset = (await fs.promises.stat(path)).size
 const down = await client.download({ file, path, offset })
 ```
 
+#### startDownload(options): Promise\<Download\>
+
+Same options as `download()`, but resolves as soon as the file has been asked for, with the
+running download instead of its result. Use it to follow one transfer without listening to the
+events of the whole client.
+
+```ts
+const download = await client.startDownload({ file, path })
+
+download.on('status', status => console.log(status)) // queued, connected, downloading, complete
+download.on('queue', place => console.log(`place ${place} in the queue`))
+download.on('progress', ({ progress }) => console.log(`${Math.round((progress ?? 0) * 100)}%`))
+download.on('failed', err => console.error(err))
+
+const result = await download.promise // same DownloadResult as download() resolves with
+```
+
+| member | value |
+|--------|-------|
+|`status`|`requested`, `queued`, `connected`, `downloading`, `complete` or `failed`|
+|`promise`|resolves with the `DownloadResult`, rejects when the transfer fails|
+|`stream`|data as it is received, read it before the transfer starts|
+|`user`, `file`, `path`, `offset`, `size`, `receivedBytes`|what the transfer is about and how far it got|
+
+#### downloads
+The downloads currently running.
+
 #### downloadStream(options): Readable
 WARNING: please report any issue with this function
 Returns a readable stream, data is pushed as parts are downloaded, can be used for HTTP 206 (partial content) for example.
@@ -164,6 +208,9 @@ answers first. `download()` calls it when needed, so you rarely have to.
 
 #### shares
 The [share index](#sharing) of the client, to inspect or change what is shared at runtime.
+
+#### username
+Name this client logs in as, empty until `connect()` sends the login.
 
 #### refreshShares(): Promise\<void\>
 Lists every share provider again and tells the server how much is shared, to pick up files
@@ -195,11 +242,8 @@ Peers search and browse your shares over the distributed network. Sharing folder
 file system only needs `sharedFolders`:
 
 ```ts
-const client = await slsk.connect({
-  user: 'username',
-  pass: 'password',
-  sharedFolders: ['/home/me/music']
-})
+const client = new SlskClient({ sharedFolders: ['/home/me/music'] })
+await client.login('username', 'password')
 ```
 
 Files are advertised with a virtual, `\` separated path rooted at the base name of the shared
@@ -248,16 +292,15 @@ Two providers ship with the module:
 |`memoryShareProvider(files)`|Files held in memory, from a list or a path → content map|
 
 ```ts
-import slsk, { fsShareProvider, memoryShareProvider, type ShareProvider } from 'slsk-client'
+import { SlskClient, fsShareProvider, memoryShareProvider, type ShareProvider } from 'slsk-client'
 
-const client = await slsk.connect({
-  user: 'username',
-  pass: 'password',
+const client = new SlskClient({
   shares: [
     fsShareProvider({ folders: ['/home/me/music'], root: 'my music' }),
     memoryShareProvider({ 'jingles\\hello.mp3': jingleBuffer })
   ]
 })
+await client.login('username', 'password')
 
 client.shares.stats() // { folders: 12, files: 843 }
 await client.refreshShares() // after adding files on disk
@@ -299,6 +342,19 @@ of every shared file, with the same `-` exclusion rules as `search()`. A provide
 Peers that then ask for one of the files are denied for now: serving the bytes (upload slots,
 queue and file connections) is the next step, and the `read()` side of the interface is what it
 will use.
+
+## Breaking changes since 2.x
+
+| change | why |
+|--------|-----|
+|`Download` (the result of `download()`) is now `DownloadResult`|`Download` is the class of a running transfer, returned by `startDownload()`|
+|`DownloadResult.stream` is gone|`downloadStream()` returns the stream, and a running `Download` exposes one|
+|Shared files are described by `ShareEntry` (`{ path, size, id?, attribs? }`) instead of `SharedFileEntry` (`{ key, value }`)|share providers can come from anywhere, not only from a file system|
+|Shared files are advertised with a virtual path (`music\\song.mp3`) instead of the local one (`/home/me/music/song.mp3`)|local paths, bucket names and row ids stay private|
+|`Shared.search()` returns a promise|a provider may answer searches from a database or a search engine|
+|`slsk.connect()` and `slsk.disconnect()` are gone, and so is the default export|`new SlskClient(options)` + `login(user, pass)` does the same without a module-level client to keep track of|
+|`new SlskClient(options)` takes a single options object, and `client.init()` is gone|`login(user, pass)` does all the connecting, so there is only one call to make|
+|The internal `stack` module is gone|state belongs to a client, so several clients can share a process|
 
 ## Development
 

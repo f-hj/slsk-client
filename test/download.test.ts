@@ -1,6 +1,7 @@
 import assert from 'assert'
 import fs from 'fs'
-import slsk, { SlskClient, type DownloadProgress, type QueuePlace, type SearchResult } from '../src/index'
+import { SlskClient, type DownloadProgress, type QueuePlace, type SearchResult } from '../src/index'
+import connectClient from './connect-client'
 import MockServer, { type LoginEvent } from './mock-server'
 import MockUploadPeer from './mock-upload-peer'
 
@@ -49,7 +50,7 @@ describe('download', () => {
       username: uploader
     })
 
-    client = await slsk.connect({
+    client = await connectClient({
       user: 'me',
       pass: 'secret',
       host: serverAddress.host,
@@ -116,6 +117,59 @@ describe('download', () => {
     assert.deepStrictEqual(down.buffer, data)
     assert.deepStrictEqual(await fs.promises.readFile(path), data)
   }).timeout(10000)
+
+  it('follows a download through its states with startDownload', async () => {
+    const path = baseFolder + '/started.mp3'
+
+    const download = await client.startDownload({ file: searchResult(), path })
+    assert.strictEqual(download.status, 'requested')
+    assert.deepStrictEqual(client.downloads, [download], 'the client lists it while it runs')
+
+    const states: string[] = []
+    download.on('status', status => states.push(status))
+
+    const result = await download.promise
+    assert.strictEqual(result.receivedBytes, data.length)
+    assert.strictEqual(download.status, 'complete')
+    assert.deepStrictEqual(states, ['queued', 'connected', 'downloading', 'complete'])
+    assert.deepStrictEqual(client.downloads, [], 'and forgets it once it is over')
+  })
+
+  it('rejects the download when the peer denies the upload', async () => {
+    const denyingPeer = new MockUploadPeer({
+      address: { host: '127.0.0.1', port: 4252 },
+      clientListenPort: incomingPort,
+      file: remoteFile,
+      data,
+      username: 'denier',
+      deny: 'Queue full'
+    })
+    const denyingServer = new MockServer({ host: '127.0.0.1', port: 2245 })
+    denyingServer
+      .on('login', (login: LoginEvent) => denyingServer.loginSuccess(login.client))
+      .on('get-peer-address', evt =>
+        denyingServer.returnPeerAddress(evt.client, evt.user, '127.0.0.1', 4252))
+
+    const denied = await connectClient({
+      user: 'me',
+      pass: 'secret',
+      host: '127.0.0.1',
+      port: 2245,
+      incomingPort: 2300
+    })
+
+    try {
+      await assert.rejects(
+        denied.download({ file: { ...searchResult(), user: 'denier' }, path: baseFolder + '/denied.mp3' }),
+        { message: 'Queue full' }
+      )
+      assert.deepStrictEqual(denied.downloads, [], 'a failed download is forgotten')
+    } finally {
+      denied.destroy()
+      denyingPeer.destroy()
+      denyingServer.destroy()
+    }
+  })
 
   it('rejects when the user cannot be reached', async () => {
     await assert.rejects(client.connectToUser('ghost', 200), { message: 'User not exist' })

@@ -10,13 +10,13 @@ Legend for the *Status* column:
 - ❌ **Missing** — not implemented at all
 - ⚪ **N/A** — obsolete/deprecated in the protocol, intentionally not implemented
 
-All messages are framed as `uint32 length (LE) + payload` and re-assembled by [`Messages`](../src/messages.ts), including partial TCP chunks — compliant with the documented framing.
+All messages are framed as `uint32 length (LE) + payload` and re-assembled by [`Messages`](../src/utils/messages.ts), including partial TCP chunks — compliant with the documented framing.
 
 ---
 
 ## 1. Server messages (connection to server.slsknet.org:2242)
 
-Implemented in [`src/server.ts`](../src/server.ts) (receive + send helpers) and [`src/message-factory.ts`](../src/message-factory.ts) (encoding). Code field: `uint32`.
+Implemented in [`src/server/`](../src/server/) (receive + send helpers) and [`src/server/messages.ts`](../src/server/messages.ts) (encoding). Code field: `uint32`.
 
 | Code | Name | Doc layout | Implementation | Status |
 |------|------|-----------|----------------|--------|
@@ -28,7 +28,7 @@ Implemented in [`src/server.ts`](../src/server.ts) (receive + send helpers) and 
 | 5 | WatchUser | string username | Encoder exists (`addUser`) but is **never sent**; response (code 5) not handled | 🟡 dead code |
 | 7 | GetUserStatus (recv) | user, uint32 status, bool privileged | Reads user + status, `privileged` not read | 🟠 |
 | 18 | ConnectToPeer (recv) | user, type, ip, port, uint32 token, bool privileged, obfuscation fields | Reads through token, ignores the rest; dispatches by type P/F/D | ✅ |
-| 18 | ConnectToPeer (send) | uint32 token, user, type | **Never sent** — the client never asks the server to relay a connection (it only connects directly) | ❌ |
+| 18 | ConnectToPeer (send) | uint32 token, user, type | Sent by `connectToUser()`, which races a direct connection against a server-relayed one | ✅ |
 | 26 | FileSearch (send) | uint32 token, string query | Sends 4 raw token bytes + query; token is an opaque, self-consistent 4-byte value | ✅ |
 | 26 | FileSearch (recv) | user, token, query | Not handled — search requests are only served via the distributed parent (code D/3) | 🟡 |
 | 28 | SetStatus | int32 status | Sends `2` (online) after login | ✅ |
@@ -42,22 +42,22 @@ Implemented in [`src/server.ts`](../src/server.ts) (receive + send helpers) and 
 | 84 | ParentSpeedRatio (recv) | uint32 | Parsed, log only | 🟠 |
 | 102 | NetInfo (recv) | count × (user, ip, port) | Fully parsed; replies ParentIP and connects to each parent as type D | ✅ |
 | 104 | WishlistInterval (recv) | uint32 | Parsed, log only | 🟠 |
-| 1001 | CantConnectToPeer (recv) | uint32 token | Parsed, log only — the pending download for that token is **not** failed | 🟠 |
-| 1001 | CantConnectToPeer (send) | uint32 token, user | **Never sent** when an indirect connection fails on our side | ❌ |
+| 1001 | CantConnectToPeer (recv) | uint32 token | Parsed and reported; the client fails the download bound to that token | ✅ |
+| 1001 | CantConnectToPeer (send) | uint32 token, user | Sent when both the direct and the relayed connection attempts to a peer failed | ✅ |
 | — | All other server codes (rooms/chat 13–23, interests, user list, 92 CheckPrivileges, 126/127 BranchLevel/Root, 130 ResetDistributed, …) | | Not implemented (chat & rooms are declared out of scope in the README) | ❌ |
 
 ## 2. Peer init messages (first message on any P/F/D connection, code field: `uint8`)
 
-Implemented in [`src/message-factory.ts`](../src/message-factory.ts), [`src/listen.ts`](../src/listen.ts) (inbound), peer classes (outbound).
+Implemented in [`src/server/messages.ts`](../src/server/messages.ts), [`src/listen.ts`](../src/listen.ts) (inbound), peer classes (outbound).
 
 | Code | Name | Doc layout | Implementation | Status |
 |------|------|-----------|----------------|--------|
-| 0 | PierceFireWall | uint32 token | Sent on outbound connections (both via factory and as a hand-rolled `05000000 00 <token>` buffer — identical bytes). Inbound: token logged, but the connection is **not matched** to a pending transfer | 🟡 send ✅ / receive 🟠 |
-| 1 | PeerInit | own user, type, uint32 token (**always 0** in modern docs) | Sent with the *transfer/connection token* instead of 0 (legacy convention). Inbound: parsed correctly and used to register the peer | 🟡 legacy token semantics |
+| 0 | PierceFireWall | uint32 token | Sent on outbound connections. Inbound: the token is matched against the pending indirect connections of `connectToUser()`, unexpected tokens are dropped | ✅ |
+| 1 | PeerInit | own user, type, uint32 token (**always 0** in modern docs) | Sent with our own name (P connections use token 0, F and D carry the transfer/connection token, a legacy convention). Inbound: parsed correctly and used to register the peer | 🟡 legacy token semantics |
 
 ## 3. Peer messages (type P, code field: `uint32`)
 
-Implemented in [`src/peer/default-peer.ts`](../src/peer/default-peer.ts).
+Implemented in [`src/peer/default-peer/`](../src/peer/default-peer/).
 
 | Code | Name | Doc layout | Implementation | Status |
 |------|------|-----------|----------------|--------|
@@ -69,20 +69,22 @@ Implemented in [`src/peer/default-peer.ts`](../src/peer/default-peer.ts).
 | 15/16 | UserInfoRequest/Response | — | Not implemented (peers asking for our info get no answer) | ❌ |
 | 36 | FolderContentsRequest (recv) | **uint32 token, string folder** | Parsed as documented and answered with FolderContentsResponse (37) built from the index | ✅ |
 | 37 | FolderContentsResponse | zlib folder listing | Echoes the token and the requested folder, then the folder → files structure, zlib compressed | ✅ |
-| 40 | TransferRequest (send) | dir 0: direction, token, filename | Sent to start downloads (**legacy** initiation — modern flow is QueueUpload 43, but dir-0 requests are still accepted network-wide) | 🟡 deprecated-but-accepted |
-| 40 | TransferRequest (recv) | dir 1 adds **uint64** filesize | Handled; accepts after 200 ms with TransferResponse. Filesize read as **uint64** ✅; dir-0 requests (peer downloading from us) are denied with a reason | ✅ |
+| 40 | TransferRequest (send) | dir 0: direction, token, filename | Only sent when a download opts into the legacy flow with `request: 'transfer'`; the default download path uses QueueUpload (43) | ✅ (legacy opt-in) |
+| 40 | TransferRequest (recv) | dir 1 adds **uint64** filesize | Reported to the client, which accepts after 200 ms with TransferResponse **only when it asked for that file** and refuses the rest. Filesize read as **uint64** ✅; dir-0 requests (peer downloading from us) are denied with a reason | ✅ |
 | 41 | TransferResponse (send) | token, bool allowed | Sends `token, 1` (upload flavour, 41b) | ✅ |
 | 41 | TransferResponse (recv) | allowed=1 [+ uint64 size in deprecated 41a] / allowed=0 + reason | Handled: allowed → opens F connection; denied → reads reason, cleans token, waits for the peer's TransferRequest | ✅ |
-| 43 | QueueUpload | string filename | **Not sent** (downloads use legacy 40/dir 0) and **not handled** on receive | ❌ |
-| 44 | PlaceInQueueResponse | filename, uint32 place | Not implemented | ❌ |
+| 43 | QueueUpload (send) | string filename | Default download initiation: the peer queues the file and comes back with its own TransferRequest | ✅ |
+| 43 | QueueUpload (recv) | string filename | Answered with UploadDenied — uploading is not supported | ✅ (denied) |
+| 44 | PlaceInQueueResponse (recv) | filename, uint32 place | Surfaced as the `download-queue` client event | ✅ |
 | 46 | UploadFailed (recv) | string filename | Handled — rejects the matching pending download / destroys the stream | ✅ |
 | 50 | UploadDenied (recv) | filename, reason | Handled — rejects the pending download promise with the peer's reason (or destroys the stream) and forgets the transfer tokens | ✅ |
-| 51 | PlaceInQueueRequest | string filename | Not implemented | ❌ |
+| 51 | PlaceInQueueRequest (send) | string filename | Sent after QueueUpload to learn our position in the queue of the peer | ✅ |
+| 51 | PlaceInQueueRequest (recv) | string filename | Parsed, log only — nothing is ever queued on our side | 🟠 |
 | 8, 10, 14, 33, 34, 42, 47–49, 52 | Obsolete/deprecated messages | — | Not implemented | ⚪ |
 
 ## 4. Distributed messages (type D, code field: `uint8`)
 
-Implemented in [`src/peer/distributed-peer.ts`](../src/peer/distributed-peer.ts).
+Implemented in [`src/peer/distributed-peer/`](../src/peer/distributed-peer/).
 
 | Code | Name | Doc layout | Implementation | Status |
 |------|------|-----------|----------------|--------|
@@ -94,7 +96,7 @@ Implemented in [`src/peer/distributed-peer.ts`](../src/peer/distributed-peer.ts)
 | 7 | DistribChildDepth | uint32 depth | Not implemented | ❌ |
 | 93 | DistribEmbeddedMessage | uint8 code + payload | Not implemented — modern servers deliver searches this way when acting as branch root | ❌ |
 
-## 5. File connection (type F) — [`src/peer/download-peer-file.ts`](../src/peer/download-peer-file.ts)
+## 5. File connection (type F) — [`src/peer/file-peer/`](../src/peer/file-peer/)
 
 Documented sequence: connect → PeerInit(token 0)/PierceFireWall → downloader sends `uint32 token` → downloader sends `uint64 offset` → uploader streams → **downloader closes** when complete.
 
@@ -102,7 +104,7 @@ Documented sequence: connect → PeerInit(token 0)/PierceFireWall → downloader
 |------|-----|----------------|--------|
 | Outbound F after TransferResponse allowed | PeerInit with token 0, then uint32 transfer token | PeerInit carries the transfer token itself; the separate `uint32 token` message is **not** sent (legacy convention) | 🟡 works with legacy uploaders |
 | Inbound-triggered F (ConnectToPeer type F) | PierceFireWall(token), read uploader's uint32 token | ✅ Pierce sent, first 4 received bytes used as the transfer token | ✅ |
-| Offset | uint64 offset (0 = fresh, other = resume) | Always sends 8 zero bytes = offset 0. **No resume support** | 🟡 |
+| Offset | uint64 offset (0 = fresh, other = resume) | Sends the offset of the download, non zero when `download({ offset })` resumes a partial file | ✅ |
 | Data & completion | Downloader closes at expected size | Buffers data (and feeds the optional stream), calls `conn.end()` once `size` bytes received | ✅ |
 | Completion bookkeeping | — | File written to disk, promise resolved with path + buffer | ✅ (client-side concern) |
 
@@ -111,11 +113,10 @@ Documented sequence: connect → PeerInit(token 0)/PierceFireWall → downloader
 ### 6.1 Login — ✅ compliant
 `connect()` → TCP connect → Login(1) → on success SharedFoldersFiles(35), HaveNoParent(71), SetStatus(28), SetWaitPort(2) — matches the documented session bootstrap. Deviation: HaveNoParent flag width was fixed to a single byte; share counts come from the index.
 
-### 6.2 Peer connection establishment — 🟡 partial
+### 6.2 Peer connection establishment — ✅ compliant
 - **Direct outbound** (P/D after GetPeerAddress/NetInfo): compliant, though the D handshake sends *both* PeerInit and PierceFireWall on connect — the docs prescribe one or the other depending on who initiated.
 - **Indirect inbound** (server ConnectToPeer 18): compliant for P/F/D dispatch.
-- **Fallbacks missing**: the client never sends ConnectToPeer(18) to request a relayed connection when a direct attempt fails, and never reports CantConnectToPeer(1001). A firewalled peer that can't be reached directly is silently unreachable.
-- Inbound PierceFireWall on the listen port is logged but not associated with any pending transfer.
+- **Fallbacks**: `connectToUser()` races a direct connection against a server-relayed one (ConnectToPeer 18); inbound PierceFireWall tokens are matched to those pending requests, and CantConnectToPeer(1001) is reported when both attempts fail.
 
 ### 6.3 Search (outgoing) — ✅ compliant
 FileSearch(26) → results collected from peers' FileSearchResponse(9) until the client-side timeout. Attribute 0 is surfaced as `bitrate`, slotfree/avgspeed surfaced as `slots`/`speed`. Only caveat: uint64 file sizes truncated to the low 32 bits.
@@ -126,8 +127,10 @@ The client joins the distributed network as documented (HaveNoParent → NetInfo
 - No children are accepted and searches are not forwarded (permanent leaf).
 - DistribPing and EmbeddedMessage(93) are unanswered, so a modern branch-root path is not supported.
 
-### 6.5 Download — 🟡 compliant with the *legacy* flow
-Uses TransferRequest(40, direction 0) instead of the modern QueueUpload(43). The docs confirm dir-0 requests are still understood network-wide ("slskd and Seeker still use it"), and both response paths (immediate allow → F connection; deny → wait for the peer's own TransferRequest) are handled. Gaps: UploadDenied(50) doesn't fail the pending download, CantConnectToPeer doesn't either, no queue-place tracking (44/51), no resume.
+### 6.5 Download — ✅ compliant with the *modern* flow, legacy opt-in
+The default flow is the modern one: QueueUpload(43) → PlaceInQueueRequest(51) → the peer answers with its own TransferRequest(dir 1) → TransferResponse(allowed) → F connection. `download({ request: 'transfer' })` opts into the legacy TransferRequest(40, dir 0) initiation instead.
+
+On the viability of the legacy flow across the network: **no mainstream client has dropped support for receiving dir-0 requests** — the docs note that "Nicotine+ ≥ 3.0.3, Museek+ and the official clients use QueueUpload today" as senders, but keep understanding dir-0 because "clients like slskd and Seeker still use this method for downloading". The practical caveat is different: the docs *discourage* answering a dir-0 request with `allowed=1` (a spoofed peer could initiate the file connection), recommending a "Queued" rejection followed by the uploader's own TransferRequest. So against modern uploaders the legacy flow degrades into the queued path anyway — both response paths are handled here.
 
 ### 6.6 Sharing — ✅ browsing and searching, ❌ uploading
 Shares come from [`ShareProvider`](../src/share/provider.ts) implementations (local file system, memory, or anything a user plugs in) indexed by [`ShareIndex`](../src/share/share-index.ts). What is compliant: real SharedFoldersFiles(35) counts, compressed SharedFileListResponse(5), FolderContentsResponse(37), FileSearchResponse(9) with sizes, extensions and attributes, and virtual `\` separated paths as other clients advertise.
@@ -151,8 +154,8 @@ Actual bugs (fixable without new features):
 
 Missing protocol behavior (features):
 
-7. Indirect connection requests (send ConnectToPeer 18) + CantConnectToPeer reporting.
-8. Modern download initiation (QueueUpload 43) and queue tracking (44/51).
+7. ~~Indirect connection requests (send ConnectToPeer 18) + CantConnectToPeer reporting~~ — **done**, see `connectToUser()`.
+8. ~~Modern download initiation (QueueUpload 43) and queue tracking (44/51)~~ — **done**, QueueUpload is the default flow, the queue place is surfaced as the `download-queue` event.
 9. Distributed-network upkeep (BranchLevel/BranchRoot to server, HaveNoParent(0), Ping, EmbeddedMessage 93, children).
 10. Actual uploads: upload slots and queue (43/44/51), TransferRequest(dir 1), and the uploader side of the file connection. Browsing and searching the shares is implemented (see 6.6).
-11. Download resume (non-zero offset on F connections).
+11. ~~Download resume (non-zero offset on F connections)~~ — **done**, see `DownloadOptions.offset`.

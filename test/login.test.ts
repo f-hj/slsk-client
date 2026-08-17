@@ -1,5 +1,6 @@
 import assert from 'assert'
-import slsk, { SlskClient } from '../src/index'
+import { SlskClient } from '../src/index'
+import connectClient from './connect-client'
 import MockServer, { type LoginEvent } from './mock-server'
 
 describe('login', () => {
@@ -29,7 +30,7 @@ describe('login', () => {
   it('must login with valid credentials, sending Login as the first message', async () => {
     const loginEvent = new Promise<LoginEvent>(resolve => mockServer.once('login', resolve))
 
-    client = await slsk.connect({
+    client = await connectClient({
       user: 'ImTheUsername',
       pass: 'EasyButRight',
       host: serverHost,
@@ -41,9 +42,32 @@ describe('login', () => {
     assert.deepStrictEqual((await loginEvent).precedingCodes, [])
   })
 
+  it('logs in a client built directly, without any other call', async () => {
+    const direct = new SlskClient({
+      host: serverHost,
+      port: serverPort,
+      incomingPort: 2301
+    })
+
+    try {
+      await direct.login('ImTheUsername', 'EasyButRight')
+      assert.strictEqual(direct.username, 'ImTheUsername')
+      assert.strictEqual(direct.shares.stats().files, 0)
+    } finally {
+      direct.destroy()
+    }
+  })
+
+  it('connects to the public server when no address is given', () => {
+    const defaults = new SlskClient()
+
+    assert.deepStrictEqual(defaults.serverAddress, { host: 'server.slsknet.org', port: 2242 })
+    assert.strictEqual(defaults.incomingPort, 2234)
+  })
+
   it('must not login with invalid credentials', async () => {
     await assert.rejects(
-      slsk.connect({
+      connectClient({
         user: 'IAmWebServer',
         pass: 'IAmWrong',
         host: serverHost,
@@ -55,7 +79,7 @@ describe('login', () => {
 
   it('must reject when the server never answers the login', async () => {
     await assert.rejects(
-      slsk.connect({
+      connectClient({
         user: 'IAmSlow',
         pass: 'DoesNotMatter',
         host: serverHost,
@@ -68,7 +92,7 @@ describe('login', () => {
 
   it('must reject when the server is unreachable', async () => {
     await assert.rejects(
-      slsk.connect({
+      connectClient({
         user: 'Anyone',
         pass: 'Anything',
         host: serverHost,

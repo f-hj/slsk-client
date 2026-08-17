@@ -1,6 +1,7 @@
 import assert from 'assert'
 import path from 'path'
-import slsk, { SlskClient, type SearchResult } from '../../src/index'
+import { SlskClient, type SearchResult } from '../../src/index'
+import connectClient from '../connect-client'
 
 const hasCredentials = Boolean(process.env.SLSK_USER && process.env.SLSK_PASS)
 const describeIntegration = hasCredentials ? describe : describe.skip
@@ -14,7 +15,7 @@ describeIntegration('multi download', () => {
   })
 
   it('must login', async () => {
-    client = await slsk.connect({
+    client = await connectClient({
       user: process.env.SLSK_USER as string,
       pass: process.env.SLSK_PASS as string
     })

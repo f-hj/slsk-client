@@ -2,9 +2,9 @@ import EventEmitter from 'events'
 import net from 'net'
 import zlib from 'zlib'
 import createDebug from 'debug'
-import Messages from '../src/messages'
-import Message from '../src/message'
-import MessageFactory, { type FileSearchResult } from '../src/message-factory'
+import Messages from '../src/utils/messages'
+import Message from '../src/utils/message'
+import { parseFileSearchResult, type FileSearchResult } from '../src/peer/default-peer/messages'
 import type { ServerAddress } from '../src/types'
 
 const debug = createDebug('slsk:mock:peer:default:i')
@@ -41,7 +41,7 @@ export default class MockDefaultPeer extends EventEmitter<MockDefaultPeerEvents>
                 return
               }
 
-              this.emit('file-search-result', MessageFactory.from.peer.fileSearchResult(buffer))
+              this.emit('file-search-result', parseFileSearchResult(buffer))
             })
             break
           }

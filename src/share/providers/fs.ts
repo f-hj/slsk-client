@@ -45,6 +45,11 @@ export interface FsShareProviderOptions {
   fs?: FsLike
   /** Follow symbolic links while scanning (default: true, as long as `maxDepth` allows) */
   followSymlinks?: boolean
+  /**
+   * Share the files and folders whose name starts with a dot (default: false). Peers have no
+   * use for `.DS_Store`, `.git` or `.cache`, and they would be advertised as any other file.
+   */
+  includeHidden?: boolean
   /** Maximum folder depth, guards against symlink loops (default: 32) */
   maxDepth?: number
 }
@@ -58,6 +63,7 @@ export default function fsShareProvider (options: FsShareProviderOptions): Share
   const files: FsLike = options.fs ?? (fs.promises as unknown as FsLike)
   const custom = options.fs !== undefined
   const followSymlinks = options.followSymlinks !== false
+  const includeHidden = options.includeHidden === true
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
 
   const rootOf = (folder: string): string => {
@@ -91,6 +97,7 @@ export default function fsShareProvider (options: FsShareProviderOptions): Share
     }
 
     for (const name of entries.sort()) {
+      if (!includeHidden && name.startsWith('.')) continue
       const path = join(folder, name)
       const stats = await statOf(path)
       if (!stats) continue

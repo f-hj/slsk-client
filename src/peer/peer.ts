@@ -1,10 +1,10 @@
 import EventEmitter from 'events'
 import type net from 'net'
 import createDebug from 'debug'
-import MessageFactory, { type FileSearchResultOptions } from '../message-factory'
-import type Message from '../message'
+import peerMessages from './messages'
+import type Message from '../utils/message'
+import type Session from '../session'
 import type { PeerInfo } from '../types'
-import type { ShareEntry } from '../share/provider'
 
 const debug = createDebug('slsk:peer:i')
 
@@ -14,8 +14,18 @@ export type PeerEvents = {
   'socket-error': [err: Error]
 }
 
+export interface PeerOptions {
+  /** State of the client this peer belongs to */
+  session: Session
+}
+
+/**
+ * A connection to a peer, whatever its type: the socket, the handshake and the plumbing every
+ * peer type shares. What travels on the connection is the business of the subclasses.
+ */
 export default class Peer<Events extends Record<string, any[]> = Record<never, never>> extends EventEmitter<PeerEvents & Events> {
   protected conn: net.Socket
+  protected readonly session: Session
   readonly peer: PeerInfo
   /**
    * Resolves once the connection is usable, rejects when it could not be established.
@@ -23,10 +33,11 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
    */
   readonly ready: Promise<void>
 
-  constructor (socket: net.Socket, peer: PeerInfo) {
+  constructor (socket: net.Socket, peer: PeerInfo, options: PeerOptions) {
     super()
     this.conn = socket
     this.peer = peer
+    this.session = options.session
 
     this.ready = socket.connecting
       ? new Promise<void>((resolve, reject) => {
@@ -49,6 +60,11 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
     })
   }
 
+  /** Name of the peer on the other end */
+  get user (): string {
+    return this.peer.user
+  }
+
   // the cast narrows the emitter to the base events, which every subclass map includes
   private get base (): EventEmitter<PeerEvents> {
     return this as unknown as EventEmitter<PeerEvents>
@@ -58,42 +74,25 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
     this.base.emit('disconnect', {})
   }
 
-  protected write (msg: Message): void {
+  /** Sends a message on the connection, its size prefix included */
+  send (msg: Message): void {
     this.conn.write(msg.getBuff())
   }
 
-  /** TransferRequest (40) direction 0: legacy way of asking for a download */
-  transferRequest (file: string, token: string): void {
-    debug(`Transfer request ${file}`)
-    this.write(MessageFactory.to.peer.transferRequest(file, token))
+  /** PierceFireWall (0): answers a connection the server asked this peer to open */
+  protected sendPierceFw (token: string): void {
+    this.send(peerMessages.pierceFw(token))
   }
 
-  /** QueueUpload (43): asks the peer to queue a file for upload to us */
-  queueUpload (file: string): void {
-    debug(`Queue upload ${file}`)
-    this.write(MessageFactory.to.peer.queueUpload(file))
-  }
-
-  /** PlaceInQueueRequest (51): asks our position in the upload queue of the peer */
-  placeInQueueRequest (file: string): void {
-    debug(`Place in queue request ${file}`)
-    this.write(MessageFactory.to.peer.placeInQueueRequest(file))
+  /** PeerInit (1): introduces us on a connection we opened ourselves */
+  protected sendPeerInit (type: string, token: string): void {
+    this.send(peerMessages.peerInit(this.session.username, type, token))
   }
 
   setAddress (host: string, port: number): void {
     debug(`setAddress for ${this.peer.user}: ${host} ${port}`)
     this.peer.host = host
     this.peer.port = port
-  }
-
-  fileSearchResult (
-    files: ShareEntry[],
-    token: string,
-    user: string,
-    options?: FileSearchResultOptions
-  ): void {
-    debug(`send FileSearchResult to user ${this.peer.user} with token ${token}`)
-    this.write(MessageFactory.to.peer.fileSearchResult(files, token, user, options))
   }
 
   destroy (): void {

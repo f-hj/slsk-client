@@ -1,8 +1,8 @@
 import EventEmitter from 'events'
 import net from 'net'
 import createDebug from 'debug'
-import Messages from '../src/messages'
-import Message from '../src/message'
+import Messages from '../src/utils/messages'
+import Message from '../src/utils/message'
 import type { ServerAddress } from '../src/types'
 
 const debug = createDebug('slsk:mock:peer:upload:i')
@@ -20,6 +20,8 @@ export interface MockUploadPeerOptions {
   username: string
   /** Place in queue answered to PlaceInQueueRequest (default: 2) */
   place?: number
+  /** When set, QueueUpload is answered with UploadDenied and this reason */
+  deny?: string
 }
 
 export interface MockUploadPeerEvents {
@@ -127,6 +129,15 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
           const file = msg.str()
           debug(`recv QueueUpload ${file}`)
           this.emit('queue-upload', file)
+          if (this.options.deny !== undefined) {
+            debug(`deny ${file}: ${this.options.deny}`)
+            c.write(new Message()
+              .int32(50) // UploadDenied
+              .str(file)
+              .str(this.options.deny)
+              .getBuff())
+            break
+          }
           this.announceTransfer(c)
           break
         }

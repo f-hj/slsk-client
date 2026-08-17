@@ -1,5 +1,5 @@
 import assert from 'assert'
-import Message from '../src/message'
+import Message from '../src/utils/message'
 
 describe('class Message', () => {
   describe('write', () => {

@@ -1,4 +1,3 @@
-import type { Readable } from 'stream'
 import type { ShareProvider } from './share/provider'
 
 export interface ServerAddress {
@@ -6,11 +5,8 @@ export interface ServerAddress {
   port: number
 }
 
-export interface ConnectOptions {
-  /** Your Soulseek username */
-  user: string
-  /** Your Soulseek password */
-  pass: string
+/** Everything a client needs to know before it logs in */
+export interface SlskClientOptions {
   /** Soulseek server host (default: server.slsknet.org) */
   host?: string
   /** Soulseek server port (default: 2242) */
@@ -117,13 +113,12 @@ export interface QueuePlace {
   place: number
 }
 
-export interface Download {
+/** What a finished download resolves with */
+export interface DownloadResult {
   /** Path where the file has been written */
   path: string
   /** Buffer of the received data, the whole file unless the download was resumed */
   buffer: Buffer
-  /** Stream, only set for stream downloads */
-  stream?: Readable
   /** Bytes on disk, including `DownloadOptions.offset` when the download was resumed */
   receivedBytes: number
   /** Size announced by the peer, when known: a smaller `receivedBytes` means a partial file */

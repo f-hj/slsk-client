@@ -1,8 +1,8 @@
 import EventEmitter from 'events'
 import net from 'net'
 import createDebug from 'debug'
-import Messages from '../src/messages'
-import Message from '../src/message'
+import Messages from '../src/utils/messages'
+import Message from '../src/utils/message'
 import type { ServerAddress } from '../src/types'
 
 const debug = createDebug('slsk:mock:peer:distributed:i')

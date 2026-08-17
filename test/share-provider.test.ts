@@ -182,6 +182,23 @@ describe('share providers', () => {
       assert.strictEqual((await readAll(provider.read(entry, { start: 6 }))).toString(), 'world')
     })
 
+    it('leaves the hidden files out of the share', async () => {
+      await fs.promises.writeFile(baseFolder + '/.DS_Store', 'junk')
+
+      const index = new ShareIndex()
+      index.add(fsShareProvider({ folders: [baseFolder] }))
+      await index.refresh()
+      assert.ok(
+        index.files.every(entry => !entry.path.includes('.DS_Store')),
+        'peers have no use for the hidden files'
+      )
+
+      const withHidden = new ShareIndex()
+      withHidden.add(fsShareProvider({ folders: [baseFolder], includeHidden: true }))
+      await withHidden.refresh()
+      assert.ok(withHidden.files.some(entry => entry.path.endsWith('.DS_Store')))
+    })
+
     it('does not fail on a folder that cannot be read', async () => {
       const index = new ShareIndex()
       index.add(fsShareProvider({ folders: ['/tmp/slsk-share-provider-nope'] }))

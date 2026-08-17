@@ -1,7 +1,7 @@
 import EventEmitter from 'events'
 import net from 'net'
 import createDebug from 'debug'
-import Message from './message'
+import Message from './utils/message'
 import type { PeerInfo } from './types'
 
 const debug = createDebug('slsk:listen:i')
