@@ -1,5 +1,5 @@
 import type { Readable } from 'stream'
-import type { FileAttribute } from '../types'
+import type { FileAttribute, FileAttributes } from '../types'
 
 /** A file shared with the other peers */
 export interface ShareEntry {
@@ -17,7 +17,7 @@ export interface ShareEntry {
    */
   id?: string
   /** Attributes sent along the file, keyed by {@link FileAttribute} */
-  attribs?: Partial<Record<FileAttribute, number>>
+  attribs?: FileAttributes
 }
 
 export interface ShareReadOptions {

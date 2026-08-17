@@ -15,6 +15,14 @@ export type LoginResult =
   | { success: true, greet: string }
   | { success: false, reason: string }
 
+/**
+ * The server refused the credentials, which no amount of retrying fixes: a client that keeps
+ * reconnecting gives up on this one, unlike a timeout or a broken connection.
+ */
+export class LoginRefusedError extends Error {
+  override readonly name = 'LoginRefusedError'
+}
+
 export interface ServerEvents {
   login: [result: LoginResult]
   'connect-to-peer': [peer: PeerInfo]
@@ -22,7 +30,16 @@ export interface ServerEvents {
   /** The server could not ask a peer to connect to us */
   'cant-connect-to-peer': [evt: { token: string }]
   'socket-error': [err: Error]
+  /** The connection is gone, whether the server closed it or the socket broke */
+  close: []
 }
+
+/**
+ * ms of idle time before the TCP keepalive probes start. The slsk server sends nothing on a
+ * quiet session, so without them a connection dropped by a NAT or a proxy looks alive until
+ * the next write, which can be hours later.
+ */
+const KEEPALIVE_DELAY = 60000
 
 /**
  * The connection to the slsk server: the socket and what we send on it. Incoming messages are
@@ -45,6 +62,7 @@ export default class Server extends EventEmitter<ServerEvents> {
   constructor (serverAddress: ServerAddress) {
     super()
     this.conn = net.createConnection(serverAddress)
+    this.conn.setKeepAlive(true, KEEPALIVE_DELAY)
 
     this.ready = new Promise<void>((resolve, reject) => {
       this.conn.once('connect', resolve)
@@ -57,6 +75,13 @@ export default class Server extends EventEmitter<ServerEvents> {
       this.emit('socket-error', err)
     })
 
+    this.conn.on('close', () => {
+      debug('server connection closed')
+      // whatever was announced is forgotten by the server, a new session starts from the login
+      this.loggedIn = false
+      this.emit('close')
+    })
+
     const msgs = new Messages()
 
     this.conn.on('data', data => {
@@ -66,6 +91,11 @@ export default class Server extends EventEmitter<ServerEvents> {
     msgs.on('message', (msg: Message) => handleServerMessage(msg, this))
   }
 
+  /** true while the connection to the slsk server is up */
+  get connected (): boolean {
+    return !this.conn.destroyed && this.conn.readyState === 'open'
+  }
+
   /**
    * Writes a message and logs what it is. The code is the first field, so reading it back names
    * every message that goes out without repeating the name at each call site; `detail` carries
@@ -73,6 +103,11 @@ export default class Server extends EventEmitter<ServerEvents> {
    */
   private write (msg: Message, detail?: string): void {
     const name = nameOf(SERVER_MESSAGES, msg.data.readUInt32LE(0))
+    if (this.conn.destroyed) {
+      // the client reports the drop as 'server-disconnect', writing would only raise a second error
+      debug(`dropping ${name}, the server connection is gone`)
+      return
+    }
     debug(`send ${name}, ${msg.data.length} bytes${detail ? `: ${detail}` : ''}`)
     this.conn.write(msg.getBuff())
   }

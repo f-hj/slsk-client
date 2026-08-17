@@ -1,9 +1,8 @@
 import EventEmitter from 'events'
 import crypto from 'crypto'
-import { PassThrough, type Readable } from 'stream'
 import net from 'net'
 import createDebug from 'debug'
-import Server from './server/server'
+import Server, { LoginRefusedError } from './server/server'
 import DefaultPeer from './peer/default-peer/default-peer'
 import DistributedPeer from './peer/distributed-peer/distributed-peer'
 import FilePeer from './peer/file-peer/file-peer'
@@ -14,16 +13,16 @@ import fsShareProvider from './share/providers/fs'
 import memoryShareProvider from './share/providers/memory'
 import Session from './session'
 import Download from './download/download'
+import { DownloadCancelledError, DownloadTimeoutError } from './download/errors'
 import waitFor from './utils/wait-for'
-import { FileAttribute } from './types'
 import type { FileSearchResultFile, FileSearchResult } from './peer/default-peer/messages'
 import type { ShareEntry, ShareProvider } from './share/provider'
 import type {
   DownloadOptions,
   DownloadProgress,
-  DownloadResult,
   PeerInfo,
   QueuePlace,
+  ReconnectOptions,
   SearchOptions,
   SearchResult,
   ServerAddress,
@@ -38,7 +37,16 @@ export type { MemoryShareFile } from './share/providers/memory'
 export type { IndexedEntry } from './share/share-index'
 export type { DownloadEvents, DownloadInit, DownloadStatus } from './download/download'
 export type { LoginResult } from './server/server'
-export { Shared, ShareIndex, Download, fsShareProvider, memoryShareProvider }
+export {
+  Shared,
+  ShareIndex,
+  Download,
+  DownloadCancelledError,
+  DownloadTimeoutError,
+  LoginRefusedError,
+  fsShareProvider,
+  memoryShareProvider
+}
 
 const debug = createDebug('slsk:i')
 
@@ -56,6 +64,12 @@ const TRANSFER_ACCEPT_DELAY = 200
 const USER_INFO_TIMEOUT = 10000
 /** How many distributed search requests are remembered to drop the duplicates */
 const MAX_SEEN_SEARCHES = 5000
+/** ms to wait for any sign that a peer understands the upload queue before asking the old way */
+const DEFAULT_QUEUE_FALLBACK_DELAY = 10000
+/** ms before the first attempt at reconnecting to the slsk server */
+const DEFAULT_RECONNECT_DELAY = 1000
+/** Longest ms between two reconnection attempts, the delay doubles until it */
+const DEFAULT_MAX_RECONNECT_DELAY = 60000
 
 export type SlskClientEvents = {
   /** Emitted for every incoming search result */
@@ -66,6 +80,13 @@ export type SlskClientEvents = {
   'download-queue': [place: QueuePlace]
   /** Error on the connection to the slsk server */
   'server-error': [err: Error]
+  /**
+   * The connection to the slsk server is gone. `reconnecting` is false when the client will not
+   * try to log in again, which makes it the moment to `destroy()` it or to build a new one.
+   */
+  'server-disconnect': [evt: { reconnecting: boolean }]
+  /** Logged in again after a lost connection: searches and downloads can be started again */
+  'server-reconnect': []
   /** Error on the server listening for incoming peer connections */
   'listen-error': [err: Error]
   /** Error on a peer connection */
@@ -97,6 +118,13 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   private readonly seenSearches = new Set<string>()
   /** Tokens of the ConnectToPeer requests we sent, by token */
   private pendingIndirect: Record<string, (socket: net.Socket, initialData?: Buffer) => void> = {}
+  /** Kept in memory to log in again after a lost connection, set once the login went through */
+  private credentials?: { user: string, pass: string }
+  private destroyed = false
+  /** true while the reconnection loop runs, so a failed attempt does not start a second one */
+  private reconnecting = false
+  /** Cuts the wait between two reconnection attempts short when the client is destroyed */
+  private cancelPause?: () => void
 
   constructor (readonly options: SlskClientOptions = {}) {
     super()
@@ -113,6 +141,22 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   /** Port incoming peer connections are accepted on */
   get incomingPort (): number {
     return this.options.incomingPort ?? DEFAULT_INCOMING_PORT
+  }
+
+  /** How a lost server connection is picked up again, false when the caller does it itself */
+  private get reconnectOptions (): Required<ReconnectOptions> | false {
+    const option = this.options.reconnect ?? true
+    if (option === false) return false
+
+    const config = option === true ? {} : option
+    const retries = config.retries ?? Infinity
+    if (retries < 1) return false
+
+    return {
+      retries,
+      delay: config.delay ?? DEFAULT_RECONNECT_DELAY,
+      maxDelay: config.maxDelay ?? DEFAULT_MAX_RECONNECT_DELAY
+    }
   }
 
   /** Share providers given in the options, whether one or several were passed */
@@ -148,17 +192,38 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
 
   private async initialize (): Promise<void> {
     debug('Init client')
-    this.server = new Server(this.serverAddress)
+    await this.connectServer()
 
-    this.server.on('socket-error', err => {
+    this.shared = new Shared()
+    this.shareProviders.forEach(provider => this.shared.addProvider(provider))
+
+    this.startListening()
+
+    await this.shared.refresh()
+    this.announceShares()
+  }
+
+  /**
+   * Opens the connection to the slsk server and wires what it reports. Called again by the
+   * reconnection loop, which is why nothing but the connection itself is set up here.
+   */
+  private async connectServer (): Promise<void> {
+    const server = new Server(this.serverAddress)
+    this.server = server
+
+    server.on('socket-error', err => {
       this.emit('server-error', err)
     })
 
-    this.server.on('connect-to-peer', peer => {
+    server.on('close', () => {
+      this.onServerClose(server)
+    })
+
+    server.on('connect-to-peer', peer => {
       this.connectToPeer(peer)
     })
 
-    this.server.on('get-peer-address', peer => {
+    server.on('get-peer-address', peer => {
       if (this.peers[peer.user]) {
         this.peers[peer.user].setAddress(peer.host as string, peer.port as number)
       } else {
@@ -171,20 +236,82 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     })
 
     // the server could not reach a peer it was asked to connect to us
-    this.server.on('cant-connect-to-peer', evt => {
+    server.on('cant-connect-to-peer', evt => {
       const download = this.session.downloads.byTransferToken(evt.token)
       if (download) download.fail(new Error(`Cannot connect to ${download.user}`))
     })
 
-    this.shared = new Shared()
-    this.shared.addFolders(this.options.sharedFolders ?? [])
-    this.shareProviders.forEach(provider => this.shared.addProvider(provider))
+    // a new connection knows nothing about us, both are queued until the login goes through
+    if (this.listen) server.setWaitPort(this.incomingPort)
+    if (this.shared) this.announceShares()
 
-    this.startListening()
+    await server.ready
+  }
 
-    await this.server.ready
-    await this.shared.refresh()
-    this.announceShares()
+  /** The server connection dropped: report it and log in again, unless the caller said not to */
+  private onServerClose (server: Server): void {
+    // a connection we already replaced, or one the reconnection loop just gave up on
+    if (this.server !== server || this.reconnecting || this.destroyed) return
+
+    const reconnecting = this.credentials !== undefined && this.reconnectOptions !== false
+    debug(`server connection lost${reconnecting ? ', logging in again' : ''}`)
+    this.emit('server-disconnect', { reconnecting })
+
+    if (reconnecting) void this.reconnectServer()
+  }
+
+  /** Connects and logs in again after the server dropped us, waiting longer after every failure */
+  private async reconnectServer (): Promise<void> {
+    const config = this.reconnectOptions
+    const credentials = this.credentials
+    if (!config || !credentials) return
+
+    this.reconnecting = true
+    try {
+      for (let attempt = 1; attempt <= config.retries; attempt++) {
+        await this.pause(Math.min(config.delay * 2 ** (attempt - 1), config.maxDelay))
+        if (this.destroyed) return
+
+        try {
+          await this.connectServer()
+          await this.sendLogin(credentials.user, credentials.pass)
+          debug(`logged in again after ${attempt} attempt(s)`)
+          this.emit('server-reconnect')
+          return
+        } catch (err) {
+          debug(`reconnection attempt ${attempt} failed: ${String(err)}`)
+          this.server.destroy()
+
+          if (err instanceof LoginRefusedError) {
+            // retrying refused credentials would only hammer the server
+            this.credentials = undefined
+            this.emit('server-error', err)
+            this.emit('server-disconnect', { reconnecting: false })
+            return
+          }
+        }
+      }
+
+      this.emit('server-error', new Error(
+        `Cannot reconnect to the slsk server, gave up after ${config.retries} attempts`
+      ))
+      this.emit('server-disconnect', { reconnecting: false })
+    } finally {
+      this.reconnecting = false
+    }
+  }
+
+  /** Waits, without keeping the process alive and without outliving a destroyed client */
+  private async pause (ms: number): Promise<void> {
+    await new Promise<void>(resolve => {
+      const timer = setTimeout(resolve, ms)
+      timer.unref()
+      this.cancelPause = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+    })
+    this.cancelPause = undefined
   }
 
   /** Accepts the connections peers open to us, to browse our shares or to send us a file */
@@ -262,13 +389,17 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     defaultPeer.on('search-result', result => this.handleSearchResult(result))
     defaultPeer.on('transfer-request', evt => this.handleTransferRequest(defaultPeer, evt))
     defaultPeer.on('transfer-response', evt => this.handleTransferResponse(defaultPeer, evt))
+    // only a peer that speaks the queue flow answers any of these three
     defaultPeer.on('place-in-queue', evt => {
+      defaultPeer.supportsQueue = true
       this.session.downloads.get(peer.user, evt.file)?.queued(evt.place)
     })
     defaultPeer.on('upload-failed', file => {
+      defaultPeer.supportsQueue = true
       this.failDownload(peer.user, file, new Error('Peer error'))
     })
     defaultPeer.on('upload-denied', evt => {
+      defaultPeer.supportsQueue = true
       this.failDownload(peer.user, evt.file, new Error(evt.reason || 'Upload denied'))
     })
 
@@ -313,14 +444,29 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     peer: DefaultPeer,
     evt: { token: string, allowed: boolean, reason?: string }
   ): void {
+    const download = this.session.downloads.byTransferToken(evt.token)
+
     if (!evt.allowed) {
-      // 'Queued' is the usual answer, the peer sends its own TransferRequest when a slot frees
-      debug(`${peer.peer.user} refused the transfer: ${evt.reason ?? 'no reason'}`)
+      const reason = evt.reason ?? ''
+      // the token we picked is only ever used by a peer that starts the transfer itself
       this.session.downloads.forgetToken(evt.token)
+
+      if (isQueuedReason(reason)) {
+        // the peer will announce the transfer with its own token once a slot frees
+        debug(`${peer.peer.user} queued ${download?.file ?? evt.token}`)
+        if (download) {
+          download.setStatus('queued')
+          // pointless towards a peer that already ignored a place request
+          if (peer.supportsQueue !== false) peer.placeInQueueRequest(download.file)
+        }
+        return
+      }
+
+      debug(`${peer.peer.user} refused the transfer: ${reason || 'no reason'}`)
+      download?.fail(new Error(reason || 'Transfer refused'))
       return
     }
 
-    const download = this.session.downloads.byTransferToken(evt.token)
     if (!download) {
       debug(`${peer.peer.user} allowed the unknown transfer ${evt.token}`)
       return
@@ -474,6 +620,17 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   async login (user: string, pass: string): Promise<void> {
     await this.init()
 
+    // logging in again after the connection was lost: that socket will not come back
+    if (!this.server.connected && !this.reconnecting) await this.connectServer()
+
+    await this.sendLogin(user, pass)
+
+    // only a working session is worth reconnecting, credentials the server refused are not
+    this.credentials = { user, pass }
+  }
+
+  /** Sends the credentials and waits for the answer of the server */
+  private async sendLogin (user: string, pass: string): Promise<void> {
     // peers we talk to before the answer comes back must know how to introduce us
     this.session.username = user
 
@@ -485,7 +642,7 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     this.server.login({ user, pass })
 
     const [result] = await answer
-    if (!result.success) throw new Error(result.reason)
+    if (!result.success) throw new LoginRefusedError(result.reason)
   }
 
   /**
@@ -618,76 +775,101 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   }
 
   /**
-   * Asks a peer for a file and returns the running download, to follow its status and its
-   * progress. Resolves as soon as the transfer has been asked for, not when it is done.
+   * Asks a peer for a file. Returns the running download right away, without waiting for the
+   * peer: `await` it for the finished file, read its `stream` to get the data as it arrives, or
+   * follow its events. Everything that can go wrong is reported on it, connecting included.
+   *
+   * A `SearchResult` is all it needs: `download(result)`, or `download({ ...result, path })`.
    */
-  async startDownload (obj: DownloadOptions): Promise<Download> {
-    if (typeof obj.file === 'undefined') throw new Error('You must specify file')
-
-    const user = obj.file.user
-    const file = obj.file.file
-    debug(`launch download ${user} ${file}`)
-
-    // connectToUser reuses the connection to this peer when there is a usable one
-    const connection = await this.connectToUser(user)
-    if (!(connection instanceof DefaultPeer)) {
-      throw new Error(`No peer connection to ${user}`)
-    }
-    const peer = connection
+  download (options: DownloadOptions): Download {
+    const { user, file } = options
+    if (!user || !file) throw new Error('download() needs the user and the file to download')
 
     const download = this.session.downloads.start({
       user,
       file,
-      path: obj.path,
-      offset: obj.offset,
-      size: obj.file.size
+      path: options.path,
+      offset: options.offset,
+      expectedSize: options.size,
+      timeout: options.timeout ?? this.options.downloadTimeout,
+      signal: options.signal
     })
 
     download.on('progress', progress => this.emit('download-progress', progress))
     download.on('queue', place => this.emit('download-queue', { user, file, place }))
 
-    if (obj.request === 'transfer') {
-      // legacy flow: we pick the token and ask for the transfer directly
-      const token = crypto.randomBytes(4).toString('hex')
-      this.session.downloads.bindToken(token, download)
-      peer.transferRequest(file, token)
-      return download
-    }
+    // asking on the next tick, so a caller that cancels right away asks the peer for nothing
+    queueMicrotask(() => {
+      if (download.isSettled) return
+      this.requestDownload(download)
+        .catch((err: Error) => download.fail(err))
+    })
 
-    // modern flow: the peer queues the file and comes back with its own transfer token
-    peer.queueUpload(file)
-    peer.placeInQueueRequest(file)
     return download
   }
 
   /**
-   * Downloads a file, resolving once it is fully downloaded (kept in RAM and
-   * written to `obj.path`, /tmp/slsk/{{originalName}} by default).
+   * Connects to the peer and asks it for the file: QueueUpload (43) + PlaceInQueueRequest (51),
+   * the flow of every current client, and the legacy TransferRequest (40, direction 0) for the
+   * peers that do not understand it. Nothing on the wire tells the two apart, so a peer that
+   * answers nothing at all is asked again the old way, and remembered as such.
    */
-  async download (obj: DownloadOptions): Promise<DownloadResult> {
-    const download = await this.startDownload(obj)
-    return await download.promise
+  private async requestDownload (download: Download): Promise<void> {
+    const { user, file } = download
+    debug(`launch download ${user} ${file}`)
+
+    const peer = this.peers[user] ?? await this.connectToUser(user)
+    if (!(peer instanceof DefaultPeer)) {
+      throw new Error(`No peer connection to ${user}`)
+    }
+    // cancelled or replaced while we were connecting, asking for it now would download it twice
+    if (download.isSettled) return
+
+    if (peer.supportsQueue === false) {
+      this.legacyTransferRequest(peer, download)
+      return
+    }
+
+    peer.queueUpload(file)
+    peer.placeInQueueRequest(file)
+
+    if (peer.supportsQueue !== true) this.fallBackWhenSilent(peer, download)
   }
 
   /**
-   * Downloads a file as a stream, data is pushed as it is received.
-   * Can be used for HTTP 206 (partial content) for example.
-   * The stream is destroyed with an error when the peer reports a failure.
+   * Asks a peer that ignored the queue request for the file the way clients did before the
+   * queue existed: it either starts the transfer right away or answers a refusal, so a download
+   * cannot stay stuck on a message the peer never understood.
    */
-  downloadStream (obj: DownloadOptions): Readable {
-    const stream = new PassThrough()
+  private fallBackWhenSilent (peer: DefaultPeer, download: Download): void {
+    const delay = this.options.queueFallbackDelay ?? DEFAULT_QUEUE_FALLBACK_DELAY
 
-    this.startDownload(obj)
-      .then(download => {
-        download.on('failed', err => stream.destroy(err))
-        download.stream.pipe(stream)
-      })
-      .catch((err: Error) => stream.destroy(err))
+    const fallback = setTimeout(() => {
+      // anything the peer answers changes the status, silence leaves it untouched
+      if (download.status !== 'requested' || peer.supportsQueue === true) return
 
-    return stream
+      debug(`${peer.user} answered nothing about its queue, asking the old way`)
+      peer.supportsQueue = false
+      this.legacyTransferRequest(peer, download)
+    }, delay)
+    // a download waiting for a peer must not be a reason for the process to stay alive
+    fallback.unref()
+
+    download.once('status', () => clearTimeout(fallback))
+  }
+
+  /** TransferRequest (40, direction 0): we pick the token and ask for the transfer ourselves */
+  private legacyTransferRequest (peer: DefaultPeer, download: Download): void {
+    const token = crypto.randomBytes(4).toString('hex')
+    this.session.downloads.bindToken(token, download)
+    peer.transferRequest(download.file, token)
   }
 
   destroy (): void {
+    this.destroyed = true
+    this.cancelPause?.()
+    this.credentials = undefined
+
     if (this.server) this.server.destroy()
     if (this.listen) this.listen.destroy()
     if (this.shared) {
@@ -703,20 +885,24 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   }
 }
 
+/**
+ * true when a peer refused a transfer only to queue it: 'Queued' is what the protocol prescribes,
+ * clients write it with or without a trailing dot. Every other reason is a refusal for good
+ * ('Queue full', 'File not shared', 'Banned'...).
+ */
+function isQueuedReason (reason: string): boolean {
+  return reason.trim().toLowerCase().startsWith('queued')
+}
+
 /** Turns a file of a FileSearchResult into what the search API exposes */
 export function toSearchResult (file: FileSearchResultFile, result: FileSearchResult): SearchResult {
-  const attribs = file.attribs
   return {
     user: file.user,
     file: file.file,
     size: file.size,
     slots: result.slots === 1,
-    bitrate: attribs[FileAttribute.Bitrate],
-    duration: attribs[FileAttribute.Duration],
-    vbr: FileAttribute.VBR in attribs ? attribs[FileAttribute.VBR] === 1 : undefined,
-    sampleRate: attribs[FileAttribute.SampleRate],
-    bitDepth: attribs[FileAttribute.BitDepth],
-    attribs,
+    // as they came: what a peer sends about a file is its own business, including unknown codes
+    attribs: file.attribs,
     speed: result.speed,
     queueLength: result.queueLength
   }

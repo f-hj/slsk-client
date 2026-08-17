@@ -15,7 +15,7 @@ export interface SharedEvents {
 
 /**
  * What is shared with the other peers: a {@link ShareIndex} fed by any number of
- * {@link ShareProvider}, plus the folder scanning helpers kept for the `sharedFolders` option.
+ * {@link ShareProvider}, plus the helpers to share a folder of the local file system at runtime.
  */
 export default class Shared extends EventEmitter<SharedEvents> {
   private readonly index = new ShareIndex()
@@ -39,12 +39,6 @@ export default class Shared extends EventEmitter<SharedEvents> {
   addProvider (provider: ShareProvider): void {
     debug(`add provider ${provider.name ?? 'unnamed'}`)
     this.index.add(provider)
-  }
-
-  /** Shares a folder of the local file system */
-  addFolders (folders: string[]): void {
-    if (folders.length === 0) return
-    this.addProvider(fsShareProvider({ folders }))
   }
 
   /** Lists every provider again, to pick up files added or removed since the last listing */

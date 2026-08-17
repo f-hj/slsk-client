@@ -138,6 +138,11 @@ export default class MockServer extends EventEmitter<MockServerEvents> {
     )
   }
 
+  /** Drops a client connection, as the real server does when it restarts or the link breaks */
+  disconnect (client: net.Socket): void {
+    client.destroy()
+  }
+
   destroy (): void {
     this.server.close()
   }

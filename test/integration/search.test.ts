@@ -52,23 +52,20 @@ describeIntegration('search', () => {
   }).timeout(5000)
 
   it('must download correctly', async () => {
-    const down = await client.download({ file })
+    const down = await client.download(file)
     console.log('test done')
     console.log(down)
     assert.ok(down.buffer.length > 0)
   }).timeout(120000)
 
   it('must download correctly a second time', async () => {
-    const down = await client.download({ file: file2 })
+    const down = await client.download(file2)
     console.log(down)
     assert.ok(down.buffer.length > 0)
   }).timeout(120000)
 
   it('must download correctly with path', async () => {
-    const down = await client.download({
-      file,
-      path: '/tmp/slsk-client_test.mp3'
-    })
+    const down = await client.download({ ...file, path: '/tmp/slsk-client_test.mp3' })
     console.log(down)
     assert.ok(down.buffer.length > 0)
 
@@ -77,7 +74,7 @@ describeIntegration('search', () => {
   }).timeout(120000)
 
   it('must download correctly with stream', async () => {
-    const stream = client.downloadStream({ file })
+    const stream = client.download(file).stream
 
     let nbPacket = 0
     await new Promise<void>((resolve, reject) => {

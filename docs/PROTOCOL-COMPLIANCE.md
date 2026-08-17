@@ -66,17 +66,17 @@ Implemented in [`src/peer/default-peer/`](../src/peer/default-peer/).
 | 5 | SharedFileListResponse (send) | **zlib-compressed**: dirs → files (code **1**, name, uint64 size, ext, attrs), unknown, private dirs | Real shares of the index, zlib compressed, grouped by folder, file code 1, uint64 sizes, extension and attributes of the entry, trailing unknown + private-dir fields | ✅ |
 | 5 | SharedFileListResponse (recv) | same | Not handled (client never browses shares) | ❌ |
 | 9 | FileSearchResponse (send) | zlib: user, token, n × (code **1**, filename, uint64 size, ext, attrs), bool slotfree, uint32 avgspeed, uint32 queue, uint32 unknown, private results | zlib ✅, file code 1 ✅, real extension ✅, uint64 sizes ✅, slotfree/avgspeed/queue configurable ✅, trailing unknown + private-results count ✅ | ✅ |
-| 9 | FileSearchResponse (recv) | same | zlib ✅; parses user, token, files incl. attributes (bitrate/duration/vbr/… surfaced), uint64 sizes ✅, slotfree, avgspeed, queue length; tolerates truncated trailing fields from older peers | ✅ |
+| 9 | FileSearchResponse (recv) | same | zlib ✅; parses user, token, files incl. every attribute code the peer sent, uint64 sizes ✅, slotfree, avgspeed, queue length; tolerates truncated trailing fields from older peers | ✅ |
 | 15 | UserInfoRequest (send/recv) | empty | Sent by `getUserInfo(user)`. Inbound: answered with UserInfoResponse built from the `userInfo` option | ✅ |
 | 16 | UserInfoResponse (send) | description, bool has_picture, [picture], uint32 uploadslots, uint32 queuesize, bool slotsfree, [uint32 uploadpermitted] | All fields, picture and upload permission included, from the `userInfo` option | ✅ |
 | 16 | UserInfoResponse (recv) | same | Parsed and surfaced by `getUserInfo()`; peers that stop after any field are tolerated, and a picture shorter than announced is dropped | ✅ |
 | 36 | FolderContentsRequest (recv) | **uint32 token, string folder** | Parsed as documented and answered with FolderContentsResponse (37) built from the index | ✅ |
 | 37 | FolderContentsResponse | zlib folder listing | Echoes the token and the requested folder, then the folder → files structure, zlib compressed | ✅ |
-| 40 | TransferRequest (send) | dir 0: direction, token, filename | Only sent when a download opts into the legacy flow with `request: 'transfer'`; the default download path uses QueueUpload (43) | ✅ (legacy opt-in) |
+| 40 | TransferRequest (send) | dir 0: direction, token, filename | Sent only to a peer that answered nothing to QueueUpload (43), which is the request tried first | ✅ (legacy fallback) |
 | 40 | TransferRequest (recv) | dir 1 adds **uint64** filesize | Reported to the client, which accepts after 200 ms with TransferResponse **only when it asked for that file** and refuses the rest. Filesize read as **uint64** ✅; dir-0 requests (peer downloading from us) are denied with a reason | ✅ |
 | 41 | TransferResponse (send) | token, bool allowed | Sends `token, 1` (upload flavour, 41b) | ✅ |
-| 41 | TransferResponse (recv) | allowed=1 [+ uint64 size in deprecated 41a] / allowed=0 + reason | Handled: allowed → opens F connection; denied → reads reason, cleans token, waits for the peer's TransferRequest | ✅ |
-| 43 | QueueUpload (send) | string filename | Default download initiation: the peer queues the file and comes back with its own TransferRequest | ✅ |
+| 41 | TransferResponse (recv) | allowed=1 [+ uint64 size in deprecated 41a] / allowed=0 + reason | Handled: allowed → opens F connection; 'Queued' → download marked queued and its place asked for; any other reason → the download fails with it | ✅ |
+| 43 | QueueUpload (send) | string filename | Download initiation: the peer queues the file and comes back with its own TransferRequest. A peer that answers nothing at all is asked with TransferRequest(dir 0) instead, see §6.5 | ✅ |
 | 43 | QueueUpload (recv) | string filename | Answered with UploadDenied — uploading is not supported | ✅ (denied) |
 | 44 | PlaceInQueueResponse (recv) | filename, uint32 place | Surfaced as the `download-queue` client event | ✅ |
 | 46 | UploadFailed (recv) | string filename | Handled — rejects the matching pending download / destroys the stream | ✅ |
@@ -108,13 +108,15 @@ Documented sequence: connect → PeerInit(token 0)/PierceFireWall → downloader
 | Outbound F after TransferResponse allowed | PeerInit with token 0, then uint32 transfer token | PeerInit carries the transfer token itself; the separate `uint32 token` message is **not** sent (legacy convention) | 🟡 works with legacy uploaders |
 | Inbound-triggered F (ConnectToPeer type F) | PierceFireWall(token), read uploader's uint32 token | ✅ Pierce sent, first 4 received bytes used as the transfer token | ✅ |
 | Offset | uint64 offset (0 = fresh, other = resume) | Sends the offset of the download, non zero when `download({ offset })` resumes a partial file | ✅ |
-| Data & completion | Downloader closes at expected size | Buffers data (and feeds the optional stream), calls `conn.end()` once `size` bytes received | ✅ |
+| Data & completion | Downloader closes at expected size | Buffers data (and feeds the optional stream), calls `conn.end()` once the expected size is received: the size the peer announced, or the one the search result reported when no message carried it (legacy flow). A transfer whose size is unknown ends when the uploader closes | ✅ |
 | Completion bookkeeping | — | File written to disk, promise resolved with path + buffer | ✅ (client-side concern) |
 
 ## 6. Process-level compliance
 
 ### 6.1 Login — ✅ compliant
-`connect()` → TCP connect → Login(1) → on success SharedFoldersFiles(35), HaveNoParent(71), SetStatus(28), SetWaitPort(2) — matches the documented session bootstrap. Deviation: HaveNoParent flag width was fixed to a single byte; share counts come from the index.
+`login()` → TCP connect → Login(1) → on success SharedFoldersFiles(35), HaveNoParent(71), SetStatus(28), SetWaitPort(2) — matches the documented session bootstrap. Deviation: HaveNoParent flag width was fixed to a single byte; share counts come from the index.
+
+The connection is kept under TCP keepalive (the protocol has no ping a client is expected to send: ServerPing is deprecated and answered by nothing), and when it drops the whole bootstrap is replayed on a new connection, credentials included, with a growing delay between the attempts. `reconnect: false` leaves it to the caller, which the `server-disconnect` event tells about it either way.
 
 ### 6.2 Peer connection establishment — ✅ compliant
 - **Direct outbound** (P/D after GetPeerAddress/NetInfo): compliant, though the D handshake sends *both* PeerInit and PierceFireWall on connect — the docs prescribe one or the other depending on who initiated.
@@ -122,7 +124,7 @@ Documented sequence: connect → PeerInit(token 0)/PierceFireWall → downloader
 - **Fallbacks**: `connectToUser()` races a direct connection against a server-relayed one (ConnectToPeer 18); inbound PierceFireWall tokens are matched to those pending requests, and CantConnectToPeer(1001) is reported when both attempts fail.
 
 ### 6.3 Search (outgoing) — ✅ compliant
-FileSearch(26) → results collected from peers' FileSearchResponse(9) until the client-side timeout. Attribute 0 is surfaced as `bitrate`, slotfree/avgspeed surfaced as `slots`/`speed`. Only caveat: uint64 file sizes truncated to the low 32 bits.
+FileSearch(26) → results collected from peers' FileSearchResponse(9) until the client-side timeout. Attributes are surfaced as a map keyed by their code, unknown ones included, and slotfree/avgspeed as `slots`/`speed`. Only caveat: uint64 file sizes truncated to the low 32 bits.
 
 ### 6.4 Search (serving, distributed network) — 🟡 partial
 The client joins the distributed network as documented (HaveNoParent → NetInfo → connect to parent as D → answer DistribSearch). Deviations:
@@ -130,8 +132,14 @@ The client joins the distributed network as documented (HaveNoParent → NetInfo
 - No children are accepted and searches are not forwarded (permanent leaf).
 - DistribPing and EmbeddedMessage(93) are unanswered, so a modern branch-root path is not supported.
 
-### 6.5 Download — ✅ compliant with the *modern* flow, legacy opt-in
-The default flow is the modern one: QueueUpload(43) → PlaceInQueueRequest(51) → the peer answers with its own TransferRequest(dir 1) → TransferResponse(allowed) → F connection. `download({ request: 'transfer' })` opts into the legacy TransferRequest(40, dir 0) initiation instead.
+### 6.5 Download — ✅ compliant with the *modern* flow, legacy fallback
+The flow is the modern one: QueueUpload(43) → PlaceInQueueRequest(51) → the peer answers with its own TransferRequest(dir 1) → TransferResponse(allowed) → F connection.
+
+Nothing in the protocol says whether a peer understands QueueUpload, and a peer that does not simply answers nothing, so a download that got no answer at all after `queueFallbackDelay` (10 s) is asked again with the legacy TransferRequest(40, dir 0). The verdict is remembered per peer connection, so only the first download from such a peer waits. A peer that answers PlaceInQueueResponse(44), QueueFailed(46) or UploadDenied(50) is known to speak the queue flow and never gets the legacy request.
+
+A refusal of the legacy request is now acted upon: TransferResponse(allowed=0) with 'Queued' marks the download queued and asks for its place, any other reason ('Queue full', 'File not shared', 'Banned'...) fails it, where it used to be logged and forgotten — leaving the download pending forever.
+
+A download the caller gives up on (`Download.cancel()`, an aborted `AbortSignal` or the inactivity timeout) is only dropped locally: no message exists for a downloader to withdraw a queued file, and the deprecated 47–49 codes are not it. The transfer the peer may still announce afterwards is answered with TransferResponse(allowed=0, 'Cancelled'), which is what the docs prescribe for a transfer nobody asked for.
 
 On the viability of the legacy flow across the network: **no mainstream client has dropped support for receiving dir-0 requests** — the docs note that "Nicotine+ ≥ 3.0.3, Museek+ and the official clients use QueueUpload today" as senders, but keep understanding dir-0 because "clients like slskd and Seeker still use this method for downloading". The practical caveat is different: the docs *discourage* answering a dir-0 request with `allowed=1` (a spoofed peer could initiate the file connection), recommending a "Queued" rejection followed by the uploader's own TransferRequest. So against modern uploaders the legacy flow degrades into the queued path anyway — both response paths are handled here.
 

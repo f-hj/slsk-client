@@ -36,7 +36,7 @@ describeIntegration('multi download', () => {
   }).timeout(5000)
 
   it('must download 3 files simultaneously', async () => {
-    const downloads = await Promise.all(files.map(file => client.download({ file })))
+    const downloads = await Promise.all(files.map(file => client.download(file)))
 
     downloads.forEach((down, i) => {
       console.log(`file${i + 1} done`)

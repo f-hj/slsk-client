@@ -20,7 +20,14 @@ export interface MockUploadPeerOptions {
   username: string
   /** Place in queue answered to PlaceInQueueRequest (default: 2) */
   place?: number
-  /** When set, QueueUpload is answered with UploadDenied and this reason */
+  /**
+   * How a download request (TransferRequest direction 0) is answered:
+   * - `queued` as current clients do: TransferResponse('Queued'), then its own TransferRequest
+   *   (direction 1) once the file is dequeued
+   * - `allow` as old clients do: TransferResponse(allowed), the downloader opens the connection
+   */
+  answer?: 'queued' | 'allow'
+  /** When set, a download request is refused with this reason */
   deny?: string
 }
 
@@ -109,7 +116,21 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
           debug(`recv TransferRequest direction ${direction} ${file}`)
           if (direction !== 0) return
           this.emit('transfer-request', { file, token })
-          // legacy flow: allow it right away, the client opens the file connection
+
+          if (this.options.deny !== undefined) {
+            debug(`deny ${file}: ${this.options.deny}`)
+            c.write(refusal(token, this.options.deny))
+            break
+          }
+
+          if (this.options.answer !== 'allow') {
+            // as current clients do: queue it and come back with our own request
+            c.write(refusal(token, 'Queued'))
+            this.announceTransfer(c)
+            break
+          }
+
+          // as old clients do: allow it right away, the client opens the file connection
           c.write(new Message()
             .int32(41)
             .rawHexStr(token)
@@ -129,6 +150,11 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
           const file = msg.str()
           debug(`recv QueueUpload ${file}`)
           this.emit('queue-upload', file)
+          if (this.options.answer === 'allow') {
+            // a client from before the upload queue does not know this message
+            debug('ignoring QueueUpload, this peer knows nothing about a queue')
+            break
+          }
           if (this.options.deny !== undefined) {
             debug(`deny ${file}: ${this.options.deny}`)
             c.write(new Message()
@@ -145,6 +171,10 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
           const file = msg.str()
           debug(`recv PlaceInQueueRequest ${file}`)
           this.emit('place-in-queue-request', file)
+          if (this.options.answer === 'allow') {
+            debug('ignoring PlaceInQueueRequest, this peer knows nothing about a queue')
+            break
+          }
           c.write(new Message()
             .int32(44)
             .str(file)
@@ -222,4 +252,14 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
     this.sockets.forEach(socket => socket.destroy())
     this.server.close()
   }
+}
+
+/** TransferResponse refusing a transfer, the answer that also carries 'Queued' */
+function refusal (token: string, reason: string): Buffer {
+  return new Message()
+    .int32(41)
+    .rawHexStr(token)
+    .int8(0)
+    .str(reason)
+    .getBuff()
 }

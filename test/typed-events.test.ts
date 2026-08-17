@@ -13,7 +13,7 @@ import DistributedPeer from '../src/peer/distributed-peer/distributed-peer'
 import Shared from '../src/share/shared'
 import Messages from '../src/utils/messages'
 import Message from '../src/utils/message'
-import { Download, SlskClient } from '../src/index'
+import { Download, SlskClient, type SearchResult } from '../src/index'
 import MockServer from './mock-server'
 import MockDistributedPeer from './mock-distributed-peer'
 import MockDefaultPeer from './mock-default-peer'
@@ -27,6 +27,7 @@ export function compileTimeChecks (): void {
   server.on('get-peer-address', peer => peer.host)
   server.on('cant-connect-to-peer', evt => evt.token.toLowerCase())
   server.on('socket-error', err => err.message)
+  server.on('close', () => {})
   // @ts-expect-error unknown server event
   server.on('connect-to-pear', () => {})
 
@@ -83,12 +84,27 @@ export function compileTimeChecks (): void {
   client.on('found', res => res.size + res.speed)
   client.on('found:moby play', res => res.user)
   client.on('download-progress', progress => progress.receivedBytes + (progress.progress ?? 0))
+  client.on('download-progress', progress => progress.sizeAnnounced)
   client.on('download-queue', place => place.user + place.file + place.place)
   client.on('server-error', err => err.message)
+  client.on('server-disconnect', evt => evt.reconnecting)
+  client.on('server-reconnect', () => {})
   client.on('listen-error', err => err.message)
   client.on('peer-error', (err, user) => err.message + user)
   // @ts-expect-error unknown client event
   client.on('lost', () => {})
+
+  // a search result is all download() needs, on its own or with options added to it
+  const result = null as unknown as SearchResult
+  client.download(result)
+  client.download({ ...result, path: '/tmp/song.mp3', timeout: 60000 })
+  client.download({ user: result.user, file: result.file, signal: AbortSignal.timeout(60000) })
+  // @ts-expect-error the file to download is a path, not a search result
+  client.download({ user: result.user, file: result })
+  // a download is awaitable, and still the running transfer
+  void client.download(result).then(res => res.buffer.length)
+  void client.download(result).stream.readable
+  client.download(result).cancel('another peer answered first')
 
   const mockServer = null as unknown as MockServer
   mockServer.on('login', login => login.username)

@@ -2,7 +2,7 @@ import zlib from 'zlib'
 import Message from '../../utils/message'
 import { baseNameOf, extensionOf, folderOf } from '../../share/virtual-path'
 import { UploadPermission } from '../../types'
-import type { FileAttribute, UserInfo, UserInfoOptions } from '../../types'
+import type { FileAttribute, FileAttributes, UserInfo, UserInfoOptions } from '../../types'
 import type { ShareEntry } from '../../share/provider'
 
 /** A file of a search answer, as a peer sent it */
@@ -10,7 +10,8 @@ export interface FileSearchResultFile {
   user: string
   file: string
   size: number
-  attribs: Record<number, number>
+  /** Everything the peer said about the file, keyed by {@link FileAttribute} */
+  attribs: FileAttributes
 }
 
 /** Search answer of a peer, once decompressed and parsed */
@@ -248,7 +249,7 @@ export function parseFileSearchResult (buffer: Buffer): FileSearchResult {
     const filesize = msg.int64()
     msg.str() // ext, obsolete and ignored by current clients
     const nbAttrib = msg.int32()
-    const attribs: Record<number, number> = {}
+    const attribs: FileAttributes = {}
     for (let attrib = 0; attrib < nbAttrib; attrib++) {
       attribs[msg.int32()] = msg.int32()
     }

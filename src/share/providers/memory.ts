@@ -1,14 +1,15 @@
 import { Readable } from 'stream'
 import { normalize } from '../virtual-path'
 import type { ShareEntry, ShareProvider, ShareReadOptions } from '../provider'
-import type { FileAttribute } from '../../types'
+import type { FileAttributes } from '../../types'
 
 export interface MemoryShareFile {
   /** Path advertised to peers */
   path: string
   /** Content of the file */
   data: Buffer | string
-  attribs?: Partial<Record<FileAttribute, number>>
+  /** Attributes sent along the file, keyed by {@link FileAttribute} */
+  attribs?: FileAttributes
 }
 
 /**

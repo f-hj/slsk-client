@@ -1,7 +1,7 @@
 import assert from 'assert'
 import fs from 'fs'
 import crypto from 'crypto'
-import { FileAttribute, memoryShareProvider, SlskClient } from '../src/index'
+import { FileAttribute, fsShareProvider, memoryShareProvider, SlskClient } from '../src/index'
 import connectClient from './connect-client'
 import MockServer, { type LoginEvent } from './mock-server'
 import MockDistributedPeer, { type PeerInitEvent } from './mock-distributed-peer'
@@ -58,11 +58,13 @@ describe('file-sharing', () => {
       pass: 'any',
       host: serverAddress.host,
       port: serverAddress.port,
-      sharedFolders: [baseFolder],
-      // a share that is not on the local file system, answered from the same index
-      shares: memoryShareProvider([
-        { path: 'bucket\\remote song.flac', data: 'remote data', attribs: { [FileAttribute.Bitrate]: 1411 } }
-      ])
+      shares: [
+        fsShareProvider({ folders: [baseFolder] }),
+        // a share that is not on the local file system, answered from the same index
+        memoryShareProvider([
+          { path: 'bucket\\remote song.flac', data: 'remote data', attribs: { [FileAttribute.Bitrate]: 1411 } }
+        ])
+      ]
     })
 
     const result = await fileSearchResult

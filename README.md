@@ -1,6 +1,6 @@
 # Soulseek NodeJS client
 
-<img align="right" src="https://fruitice.fr/logo-slsk.png"/>
+![slsk-client logo](https://fruitice.fr/logo-slsk.png)
 
 [![CI](https://github.com/f-hj/slsk-client/actions/workflows/ci.yml/badge.svg)](https://github.com/f-hj/slsk-client/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/f-hj/slsk-client.svg)](https://github.com/f-hj/slsk-client/stargazers)
@@ -45,13 +45,13 @@ const res = await client.search({
 //     file: '@@poulet-files/random.mp3',
 //     size: 6437362,
 //     slots: true,
-//     bitrate: 320,
-//     speed: 1251293
+//     speed: 1251293,
+//     attribs: { 0: 320, 1: 201 } // FileAttribute.Bitrate, FileAttribute.Duration
 //   }
 // ]
 
 const data = await client.download({
-  file: res[0],
+  ...res[0],
   path: __dirname + '/random.mp3'
 })
 // can res.send(data.buffer) if you use express
@@ -64,7 +64,7 @@ const data = await client.download({
 Everything but the credentials is configured here, once.
 
 ```ts
-const client = new SlskClient({ sharedFolders: ['/home/me/music'] })
+const client = new SlskClient({ shares: fsShareProvider({ folders: ['/home/me/music'] }) })
 ```
 
 ##### options
@@ -73,18 +73,23 @@ const client = new SlskClient({ sharedFolders: ['/home/me/music'] })
 |host|choose a different host for Slsk server|server.slsknet.org|
 |port|choose a different port|2242|
 |incomingPort|Port used for incoming connection|2234|
-|sharedFolders|Folders of the local file system to be shared|[]|
-|shares|One or more [share providers](#sharing), for files that are not on the local file system|[]|
+|shares|One or more [share providers](#sharing): folders of the local file system, files in memory, or anything else|[]|
 |timeout|Time in ms before the login attempt fails|2000|
 |userInfo|What is answered to a peer asking for our info: `description`, `picture`, `uploadSlots`, `queueSize`, `slotsFree`, `uploadPermitted`|`{ description: '', uploadSlots: 1, queueSize: 0, slotsFree: true, uploadPermitted: UploadPermission.Everyone }`|Only the keys you set are overridden|
+|reconnect|`false`, or `{ retries?, delay?, maxDelay? }`, to log in again when the server connection drops|`{ retries: Infinity, delay: 1000, maxDelay: 60000 }`|the delay doubles after every failed attempt, up to `maxDelay`|
+|downloadTimeout|ms without any progress after which a download fails|none|a queued file can legitimately wait for hours, so there is no timeout unless you set one|
+|queueFallbackDelay|ms to wait for a sign that a peer understands `QueueUpload` before asking it the old way|10000|rarely worth changing, it only delays downloads from peers old enough to ignore the queue messages|
 
 #### login(user, pass): Promise\<void\>
 
 Connects to the slsk server, lists the shares, starts listening for incoming peer connections
 and logs in: everything the client needs to be usable, so this is the only call to make.
 
-Rejects when the connection fails, the credentials are refused, or the server did not answer the
-login before `timeout` ms. Destroy the client when it rejects.
+Rejects when the connection fails, the credentials are refused (with a `LoginRefusedError`) or the
+server did not answer the login before `timeout` ms. Destroy the client when it rejects.
+
+Calling it again after the connection dropped logs in on a new one, which is what
+`reconnect: false` leaves to you.
 
 ```ts
 const client = new SlskClient()
@@ -111,25 +116,27 @@ try {
 |file|Full path of peer file|
 |size|Size of file|
 |slots|Available slots|true if peer have enough slots to get file immediately|
-|bitrate|Bitrate of current file|Can be undefined if not sent by client|
-|duration|Duration in seconds|Can be undefined if not sent by client|
-|vbr|true when the file is VBR encoded|Can be undefined if not sent by client|
-|sampleRate|Sample rate in Hz|Can be undefined if not sent by client|
-|bitDepth|Bit depth|Can be undefined if not sent by client|
-|attribs|All raw attributes sent by the peer|Keyed by `FileAttribute`|
+|attribs|Everything the peer said about the file, keyed by `FileAttribute`|Empty when it said nothing, and codes this version knows nothing about are kept as they came|
 |speed|Speed of peer|Provided by peer, don't know what is it exactly|
 |queueLength|Files queued for upload on the peer side|Useful to pick a peer that will answer quickly|
 
-```json
-[
-  {
-    "user": "jambon",
-    "file": "@@jambon-slsk/myfile.m4a",
-    "slots": true,
-    "speed": 32
-  }
-]
+```ts
+import { FileAttribute } from 'slsk-client'
+
+res
+  .filter(it => it.attribs[FileAttribute.Bitrate] === 320)
+  .filter(it => it.attribs[FileAttribute.VBR] !== 1)
+  .sort((a, b) => (a.attribs[FileAttribute.Duration] ?? 0) - (b.attribs[FileAttribute.Duration] ?? 0))
 ```
+
+| code | attribute | note |
+|------|-----------|------|
+|0|`Bitrate`|kbps|
+|1|`Duration`|seconds|
+|2|`VBR`|1 when the file is VBR encoded|
+|3|`Encoder`|rarely sent|
+|4|`SampleRate`|Hz, sent for lossless files|
+|5|`BitDepth`|sent for lossless files|
 
 ##### events
 You can also handle results as they arrive with events
@@ -138,70 +145,96 @@ client.on('found', res => {}) // any search result
 client.on(`found:${req}`, res => {}) // or only a specific request
 ```
 
-#### download(options): Promise\<DownloadResult\>
+#### download(options): Download
 
-Resolves with the buffered file once it is completely downloaded. (Stored in RAM)
+Asks a peer for a file. Returns the running download right away, without waiting for the peer:
+`await` it for the finished file, read its `stream` for the data as it arrives, or follow its
+events. Everything that can go wrong is reported on it, connecting to the peer included.
 
-The peer is asked to queue the file (`QueueUpload`), which is what current Soulseek clients expect.
-Peers that only understand the legacy request (`TransferRequest` direction 0) are still supported
-with `request: 'transfer'`.
+A `SearchResult` is all it needs, so it is either passed as is or spread to add options to it.
+
+```ts
+const { buffer, path } = await client.download({ ...res[0], path: '/tmp/song.mp3' })
+```
+
+How the file is asked for is not your problem: the peer is asked to queue it (`QueueUpload`), which
+is what current Soulseek clients speak, and a peer that answers nothing about a queue is asked
+again the way clients did before it existed (`TransferRequest` direction 0). What that peer
+understands is then remembered, so the next download from it goes straight to it.
 
 ##### options
 | key | required | value | default | note |
 |-----|----------|-------|---------|------|
-|file|true|File sent when searched|
-|path||Complete path where file will be stored (if you want read it later)|/tmp/slsk/{{originalName}}|
+|user|true|Peer holding the file|
+|file|true|Full path of the file on the peer side|
+|size||Size the search result announced|
+|path||Complete path where file will be stored (if you want read it later)|/tmp/slsk/{{user}}\_{{originalName}}|
 |offset||Bytes already downloaded, to resume a partial download|0|`path` is appended to instead of overwritten|
-|request||`queue` (QueueUpload, 43) or `transfer` (legacy TransferRequest, 40)|queue|
+|timeout||ms without any progress after which the download fails|`downloadTimeout` of the client|queue updates count as progress, use a `signal` for a deadline nothing resets|
+|signal||`AbortSignal` that cancels the download when it is aborted|
 
-##### resolves with
+##### awaiting it resolves with
 | key | value |
 |-----|-------|
 |path|Path where the file has been written|
 |buffer|Buffer of the received data, the whole file unless the download was resumed|
 |receivedBytes|Bytes on disk, `offset` included|
-|size|Size announced by the peer, when known: a smaller `receivedBytes` means a partial file|
+|size|Size the peer announced, `undefined` when it announced none|
 
-##### resuming a download
+##### following one transfer
 ```ts
-const offset = (await fs.promises.stat(path)).size
-const down = await client.download({ file, path, offset })
-```
-
-#### startDownload(options): Promise\<Download\>
-
-Same options as `download()`, but resolves as soon as the file has been asked for, with the
-running download instead of its result. Use it to follow one transfer without listening to the
-events of the whole client.
-
-```ts
-const download = await client.startDownload({ file, path })
+const download = client.download({ ...res[0], path })
 
 download.on('status', status => console.log(status)) // queued, connected, downloading, complete
 download.on('queue', place => console.log(`place ${place} in the queue`))
 download.on('progress', ({ progress }) => console.log(`${Math.round((progress ?? 0) * 100)}%`))
 download.on('failed', err => console.error(err))
 
-const result = await download.promise // same DownloadResult as download() resolves with
+const result = await download // or await download.promise
 ```
 
 | member | value |
 |--------|-------|
-|`status`|`requested`, `queued`, `connected`, `downloading`, `complete` or `failed`|
-|`promise`|resolves with the `DownloadResult`, rejects when the transfer fails|
-|`stream`|data as it is received, read it before the transfer starts|
-|`user`, `file`, `path`, `offset`, `size`, `receivedBytes`|what the transfer is about and how far it got|
+|`status`|`requested`, `queued`, `connected`, `downloading`, `complete`, `failed` or `cancelled`|
+|`promise`|resolves with the result, rejects when the transfer fails. Awaiting the download awaits it|
+|`stream`|data as it is received, read it before the transfer starts (HTTP 206 and the like)|
+|`cancel(reason?)`|gives up on the transfer: the promise rejects with a `DownloadCancelledError`|
+|`size`, `expectedSize`, `totalBytes`, `isSizeKnown`|what the peer announced, what the search result said, the best of the two, and which of them it is|
+|`user`, `file`, `path`, `offset`, `receivedBytes`, `isSettled`, `isComplete`|what the transfer is about and how far it got|
+
+##### resuming a download
+```ts
+const offset = (await fs.promises.stat(path)).size
+const down = await client.download({ ...file, path, offset })
+```
+
+##### streaming a download
+```ts
+client.download(file).stream.pipe(res)
+```
+
+##### giving up on a peer and trying another one
+Nothing has to be sent to the peer to cancel a queued file, and a transfer it announces later is
+refused, so a download can be handed over to another source at any time.
+
+```ts
+const sources = res.filter(it => it.file.endsWith('song.mp3'))
+
+for (const source of sources) {
+  const download = client.download({ ...source, path, timeout: 30000 })
+  try {
+    return await download
+  } catch (err) {
+    console.log(`${source.user} did not deliver: ${err.message}`)
+  }
+}
+```
+
+A download also takes an `AbortSignal`, which is the way to put a deadline on the whole transfer
+rather than on its inactivity: `client.download({ ...file, signal: AbortSignal.timeout(60000) })`.
 
 #### downloads
 The downloads currently running.
-
-#### downloadStream(options): Readable
-WARNING: please report any issue with this function
-Returns a readable stream, data is pushed as parts are downloaded, can be used for HTTP 206 (partial content) for example.
-The stream is destroyed with an error when the peer reports a failure.
-
-##### options
-Same as `download(options)`.
 
 #### getUserInfo(user, timeout?): Promise\<UserInfo\>
 
@@ -248,7 +281,7 @@ answers first. `download()` calls it when needed, so you rarely have to.
 The [share index](#sharing) of the client, to inspect or change what is shared at runtime.
 
 #### username
-Name this client logs in as, empty until `connect()` sends the login.
+Name this client logs in as, empty until `login()` is called.
 
 #### refreshShares(): Promise\<void\>
 Lists every share provider again and tells the server how much is shared, to pick up files
@@ -262,9 +295,11 @@ Closes the connection to the server, the incoming-peer listener and every peer c
 |-------|---------|------|
 |`found`|`SearchResult`|any search result|
 |`found:{req}`|`SearchResult`|result of a specific request|
-|`download-progress`|`{ user, file, receivedBytes, totalBytes?, progress? }`|progress of a running download|
+|`download-progress`|`{ user, file, receivedBytes, totalBytes?, sizeAnnounced, progress? }`|progress of a running download. `sizeAnnounced` is false while `totalBytes` is only the size the search result announced|
 |`download-queue`|`{ user, file, place }`|our place in the upload queue of the peer|
 |`server-error`|`Error`|error on the connection to the slsk server|
+|`server-disconnect`|`{ reconnecting }`|the connection to the slsk server is gone. `reconnecting` is false when the client will not log in again, which makes it the moment to `destroy()` it|
+|`server-reconnect`|—|logged in again after a lost connection|
 |`listen-error`|`Error`|error on the incoming peer connections server|
 |`peer-error`|`Error, user`|error on a peer connection|
 
@@ -274,13 +309,21 @@ client.on('download-progress', ({ file, progress }) => {
 })
 ```
 
+The connection to the slsk server uses TCP keepalive and is re-established with a growing delay
+when it drops, which `reconnect: false` turns off. Credentials the server refuses stop it, since
+retrying them would only hammer the server: `server-error` then carries a `LoginRefusedError` and
+`server-disconnect` says `reconnecting: false`. Peer connections, searches and downloads are left
+alone while the server is unreachable, peers are connected to directly.
+
 ## Sharing
 
-Peers search and browse your shares over the distributed network. Sharing folders of the local
-file system only needs `sharedFolders`:
+Peers search and browse your shares over the distributed network. Everything shared goes through a
+share provider, `fsShareProvider` for folders of the local file system:
 
 ```ts
-const client = new SlskClient({ sharedFolders: ['/home/me/music'] })
+import { SlskClient, fsShareProvider } from 'slsk-client'
+
+const client = new SlskClient({ shares: fsShareProvider({ folders: ['/home/me/music'] }) })
 await client.login('username', 'password')
 ```
 
@@ -315,7 +358,7 @@ export interface ShareEntry {
   /** Opaque handle of the file for the provider, given back to read() and stat() */
   id?: string
   /** Attributes sent along the file, keyed by FileAttribute */
-  attribs?: Partial<Record<FileAttribute, number>>
+  attribs?: FileAttributes
 }
 ```
 
@@ -385,14 +428,21 @@ will use.
 
 | change | why |
 |--------|-----|
-|`Download` (the result of `download()`) is now `DownloadResult`|`Download` is the class of a running transfer, returned by `startDownload()`|
-|`DownloadResult.stream` is gone|`downloadStream()` returns the stream, and a running `Download` exposes one|
+|`Download` (the result of `download()`) is now `DownloadResult`|`Download` is the class of a running transfer, which `download()` returns|
+|`download()` returns a `Download` instead of a promise, and `startDownload()` and `downloadStream()` are gone|there is one way to download: `await` it for the file, read `.stream` for the bytes as they arrive, listen to it to follow the transfer|
+|`download({ file: searchResult })` is now `download({ user, file, size? })`|it only ever read those three fields; a `SearchResult` still works as is (`download(result)`, `download({ ...result, path })`) but `file` is now the file name|
+|`DownloadOptions.request` is gone|which request a peer understands is the library's problem: the queue flow is used, and a peer that ignores it is asked the old way|
+|`DownloadResult.stream` is gone|a running `Download` exposes one|
+|`DownloadProgress` gained `sizeAnnounced`, and a size of 0 coming from a search result is treated as unknown|0 used to mean "already complete"; only the peer can say a file is empty|
+|`SearchResult` exposes `attribs` only, `bitrate`, `duration`, `vbr`, `sampleRate` and `bitDepth` are gone|one map keyed by `FileAttribute` instead of a handful of parsed fields plus the codes nobody parsed: `attribs[FileAttribute.Bitrate]`|
 |Shared files are described by `ShareEntry` (`{ path, size, id?, attribs? }`) instead of `SharedFileEntry` (`{ key, value }`)|share providers can come from anywhere, not only from a file system|
+|The `sharedFolders` option and `Shared.addFolders()` are gone, `shares: fsShareProvider({ folders })` replaces them|one way to share instead of two, and the provider takes the options a folder scan needs (`root`, `fs`, `followSymlinks`, `includeHidden`, `maxDepth`)|
 |Shared files are advertised with a virtual path (`music\\song.mp3`) instead of the local one (`/home/me/music/song.mp3`)|local paths, bucket names and row ids stay private|
 |`Shared.search()` returns a promise|a provider may answer searches from a database or a search engine|
 |`slsk.connect()` and `slsk.disconnect()` are gone, and so is the default export|`new SlskClient(options)` + `login(user, pass)` does the same without a module-level client to keep track of|
 |`new SlskClient(options)` takes a single options object, and `client.init()` is gone|`login(user, pass)` does all the connecting, so there is only one call to make|
 |The internal `stack` module is gone|state belongs to a client, so several clients can share a process|
+|A lost server connection is reported (`server-disconnect`) and picked up again by default|it used to be invisible: the client looked alive with a dead socket|
 
 ## Development
 

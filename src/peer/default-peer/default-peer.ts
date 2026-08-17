@@ -54,6 +54,12 @@ export default class DefaultPeer extends Peer<DefaultPeerEvents> {
   readonly shared?: Shared
   /** What is answered to a UserInfoRequest of this peer, the defaults fill what is left out */
   readonly userInfo?: UserInfoOptions
+  /**
+   * Whether this peer understands the upload queue (QueueUpload 43, PlaceInQueueRequest 51),
+   * which nothing on the wire announces: `undefined` until it answered anything about it, true
+   * as soon as it did, false once it stayed silent and the old request had to be used instead.
+   */
+  supportsQueue?: boolean
 
   constructor (socket: net.Socket, peer: PeerInfo, options: DefaultPeerOptions) {
     super(socket, peer, options)

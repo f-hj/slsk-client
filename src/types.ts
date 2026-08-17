@@ -5,6 +5,16 @@ export interface ServerAddress {
   port: number
 }
 
+/** How a lost connection to the slsk server is picked up again */
+export interface ReconnectOptions {
+  /** How many times the connection is retried before giving up (default: unlimited) */
+  retries?: number
+  /** ms before the first attempt, doubled after every failure (default: 1000) */
+  delay?: number
+  /** Upper bound of that growing delay, in ms (default: 60000) */
+  maxDelay?: number
+}
+
 /** Everything a client needs to know before it logs in */
 export interface SlskClientOptions {
   /** Soulseek server host (default: server.slsknet.org) */
@@ -13,11 +23,11 @@ export interface SlskClientOptions {
   port?: number
   /** Port used for incoming peer connections (default: 2234) */
   incomingPort?: number
-  /** Folders of the local file system to be shared with other peers (default: []) */
-  sharedFolders?: string[]
   /**
-   * Share providers, to share files that do not come from the local file system
-   * (object storage, database, remote API...). Used on top of `sharedFolders`.
+   * What is shared with the other peers, as one or several share providers:
+   * `fsShareProvider({ folders })` for folders of the local file system,
+   * `memoryShareProvider()` for files held in memory, or your own for anything else
+   * (object storage, database, remote API...).
    */
   shares?: ShareProvider | ShareProvider[]
   /** Time in ms after which the login attempt fails (default: 2000) */
@@ -27,6 +37,24 @@ export interface SlskClientOptions {
    * (default: no description, one free slot, nothing queued and uploads open to everyone)
    */
   userInfo?: UserInfoOptions
+  /**
+   * What happens when the connection to the slsk server drops: log in again, with a growing
+   * delay between the attempts (default), or `false` to leave it to the caller, which is then
+   * told about it by the `server-disconnect` event.
+   */
+  reconnect?: boolean | ReconnectOptions
+  /**
+   * ms without any progress after which a download fails, unless it sets its own
+   * `DownloadOptions.timeout` (default: no timeout, a queued file can wait for hours)
+   */
+  downloadTimeout?: number
+  /**
+   * ms to wait for any sign that a peer understands the upload queue (QueueUpload 43) before
+   * asking it for the file the way clients did before the queue existed (default: 10000).
+   * Rarely worth changing: it only delays the downloads from peers old enough to ignore the
+   * queue messages entirely.
+   */
+  queueFallbackDelay?: number
 }
 
 export interface SearchOptions {
@@ -49,6 +77,12 @@ export enum FileAttribute {
   BitDepth = 5
 }
 
+/**
+ * Attributes of a file, keyed by {@link FileAttribute}: `attribs[FileAttribute.Bitrate]`. Codes
+ * this version knows nothing about are kept as they came, so nothing a peer sends is lost.
+ */
+export type FileAttributes = Partial<Record<FileAttribute, number>> & Record<number, number | undefined>
+
 export interface SearchResult {
   /** Peer name owning the file */
   user: string
@@ -58,28 +92,33 @@ export interface SearchResult {
   size: number
   /** true if the peer has a free slot to send the file immediately */
   slots: boolean
-  /** Bitrate of the file, may be undefined when not sent by the peer */
-  bitrate?: number
-  /** Duration in seconds, may be undefined when not sent by the peer */
-  duration?: number
-  /** true when the file is VBR encoded, undefined when not sent by the peer */
-  vbr?: boolean
-  /** Sample rate in Hz, may be undefined when not sent by the peer */
-  sampleRate?: number
-  /** Bit depth of the file, may be undefined when not sent by the peer */
-  bitDepth?: number
-  /** All raw attributes sent by the peer, keyed by {@link FileAttribute} */
-  attribs?: Record<number, number>
+  /**
+   * Everything the peer said about the file, keyed by {@link FileAttribute}: an empty object
+   * when it sent nothing. `attribs[FileAttribute.Bitrate]`, `attribs[FileAttribute.Duration]`,
+   * `attribs[FileAttribute.VBR] === 1`...
+   */
+  attribs: FileAttributes
   /** Speed of the peer, as reported by the peer itself */
   speed: number
   /** Number of files queued for upload on the peer side, when reported */
   queueLength?: number
 }
 
+/**
+ * What to download and how. A {@link SearchResult} already holds `user`, `file` and `size`, so
+ * `download(result)` and `download({ ...result, path })` both work.
+ */
 export interface DownloadOptions {
-  /** A file object obtained from a search */
-  file: SearchResult
-  /** Complete path where the file will be stored (default: /tmp/slsk/{{originalName}}) */
+  /** Peer holding the file */
+  user: string
+  /** Full path of the file on the peer side, as a search result reports it */
+  file: string
+  /**
+   * Size the search result announced, used to report the progress before the peer announces the
+   * transfer. Only a hint: the peer is the one that knows how big the file is.
+   */
+  size?: number
+  /** Complete path where the file will be stored (default: /tmp/slsk/{{user}}_{{originalName}}) */
   path?: string
   /**
    * Number of bytes already downloaded, sent to the peer as the file offset to resume a
@@ -87,13 +126,13 @@ export interface DownloadOptions {
    */
   offset?: number
   /**
-   * How the download is asked for:
-   * - `queue` (default) sends QueueUpload (43), the flow used by modern clients, and follows
-   *   the place in queue with PlaceInQueueRequest (51)
-   * - `transfer` sends the legacy TransferRequest (40, direction 0), kept for peers that only
-   *   understand the old flow
+   * ms without any progress after which the download fails with a `DownloadTimeoutError`
+   * (default: `SlskClientOptions.downloadTimeout`, none unless it is set). Queue updates count
+   * as progress; use `signal: AbortSignal.timeout(ms)` for a deadline that nothing resets.
    */
-  request?: 'queue' | 'transfer'
+  timeout?: number
+  /** Aborting it cancels the download, whatever state it is in */
+  signal?: AbortSignal
 }
 
 export interface DownloadProgress {
@@ -103,9 +142,14 @@ export interface DownloadProgress {
   file: string
   /** Bytes received so far, including `DownloadOptions.offset` when resuming */
   receivedBytes: number
-  /** Total size of the file, undefined until the peer announced it */
+  /**
+   * Size of the file: what the peer announced, the `DownloadOptions.size` hint until then, and
+   * undefined when neither is known
+   */
   totalBytes?: number
-  /** Ratio between 0 and 1, undefined until the peer announced the total size */
+  /** true when `totalBytes` is what the peer announced, false when it is the search-result hint */
+  sizeAnnounced: boolean
+  /** Ratio between 0 and 1, undefined while the size of the file is unknown */
   progress?: number
 }
 
@@ -126,7 +170,10 @@ export interface DownloadResult {
   buffer: Buffer
   /** Bytes on disk, including `DownloadOptions.offset` when the download was resumed */
   receivedBytes: number
-  /** Size announced by the peer, when known: a smaller `receivedBytes` means a partial file */
+  /**
+   * Size the peer announced, undefined when it announced none: a `receivedBytes` smaller than
+   * an announced size means the file is partial
+   */
   size?: number
 }
 
