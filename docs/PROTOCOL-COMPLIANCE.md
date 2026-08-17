@@ -42,6 +42,7 @@ Implemented in [`src/server/`](../src/server/) (receive + send helpers) and [`sr
 | 84 | ParentSpeedRatio (recv) | uint32 | Parsed, log only | 🟠 |
 | 102 | NetInfo (recv) | count × (user, ip, port) | Fully parsed; replies ParentIP and connects to each parent as type D | ✅ |
 | 104 | WishlistInterval (recv) | uint32 | Parsed, log only | 🟠 |
+| 160 | ExcludedSearchPhrases (recv) | uint32 count, count × string | Fully parsed, log only — the phrases are **not** filtered out of the search answers yet | 🟠 |
 | 1001 | CantConnectToPeer (recv) | uint32 token | Parsed and reported; the client fails the download bound to that token | ✅ |
 | 1001 | CantConnectToPeer (send) | uint32 token, user | Sent when both the direct and the relayed connection attempts to a peer failed | ✅ |
 | — | All other server codes (rooms/chat 13–23, interests, user list, 92 CheckPrivileges, 126/127 BranchLevel/Root, 130 ResetDistributed, …) | | Not implemented (chat & rooms are declared out of scope in the README) | ❌ |

@@ -121,6 +121,16 @@ export default function handleServerMessage (msg: Message, server: Server): void
       debug(`Whishlist interval is ${number}. msg length: ${msg.data.length}`)
       break
     }
+    case 160: {
+      // phrases the search network does not allow: our answers should leave them out
+      const number = msg.int32()
+      const phrases: string[] = []
+      for (let i = 0; i < number && msg.remaining() >= 4; i++) {
+        phrases.push(msg.str())
+      }
+      debug(`recv ExcludedSearchPhrases, ${phrases.length} of ${number}: ${phrases.join(', ')}`)
+      break
+    }
     case 1001: {
       const token = msg.readRawHexStr(4)
       debug(`Cannot connect to peer, token ${token}`)
