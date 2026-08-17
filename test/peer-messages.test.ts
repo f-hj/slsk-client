@@ -2,7 +2,8 @@ import assert from 'assert'
 import zlib from 'zlib'
 import Message from '../src/utils/message'
 import peerMessages from '../src/peer/messages'
-import messages, { parseFileSearchResult } from '../src/peer/default-peer/messages'
+import messages, { parseFileSearchResult, parseUserInfo } from '../src/peer/default-peer/messages'
+import { UploadPermission, type UserInfo } from '../src/types'
 import type { ShareEntry } from '../src/share/provider'
 
 describe('peer messages', () => {
@@ -193,6 +194,75 @@ describe('peer messages', () => {
     const parsed = parseFileSearchResult(zlib.inflateSync(buff.subarray(8)))
 
     assert.strictEqual(parsed.files[0].size, size)
+  })
+
+  it('parses back the user info it builds', () => {
+    const picture = Buffer.from('a png, allegedly')
+    const buff = messages.userInfoResponse({
+      description: 'hello',
+      picture,
+      uploadSlots: 3,
+      queueSize: 9,
+      slotsFree: true,
+      uploadPermitted: UploadPermission.PermittedList
+    }).getBuff()
+
+    const msg = new Message(buff)
+    msg.int32() // size
+    assert.strictEqual(msg.int32(), 16)
+
+    assert.deepStrictEqual(parseUserInfo(msg, 'alice'), {
+      user: 'alice',
+      description: 'hello',
+      picture,
+      uploadSlots: 3,
+      queueSize: 9,
+      slotsFree: true,
+      uploadPermitted: UploadPermission.PermittedList
+    } satisfies UserInfo)
+  })
+
+  it('parses the user info of a peer that stops early', () => {
+    const buff = messages.userInfoResponse({ description: 'hello', uploadSlots: 3 }).getBuff()
+
+    // drop the queue size, the free slot flag and the upload permission
+    const msg = new Message(buff.subarray(0, buff.length - 9))
+    msg.int32() // size
+    msg.int32() // code
+
+    const info = parseUserInfo(msg, 'alice')
+    assert.strictEqual(info.description, 'hello')
+    assert.strictEqual(info.uploadSlots, 3)
+    assert.strictEqual(info.queueSize, 0)
+    assert.strictEqual(info.slotsFree, false)
+    assert.strictEqual(info.uploadPermitted, undefined)
+  })
+
+  it('ignores a picture a peer announced but did not send', () => {
+    // a peer announcing 100 bytes of picture and sending 5
+    const built = new Message()
+      .int32(16)
+      .str('hello')
+      .int8(1)
+      .int32(100)
+    built.writeBuffer(Buffer.from('short'))
+
+    const msg = new Message(built.getBuff())
+    msg.int32() // size
+    msg.int32() // code
+
+    const info = parseUserInfo(msg, 'alice')
+    assert.strictEqual(info.description, 'hello')
+    assert.strictEqual(info.picture, undefined)
+  })
+
+  it('builds a userInfoRequest carrying nothing but its code', () => {
+    const buff = messages.userInfoRequest().getBuff()
+
+    const msg = new Message(buff)
+    assert.strictEqual(msg.int32(), 4)
+    assert.strictEqual(msg.int32(), 15)
+    assert.strictEqual(msg.remaining(), 0)
   })
 
   it('parses a result of a peer that stops after the file list', () => {

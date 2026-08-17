@@ -27,7 +27,8 @@ import type {
   SearchOptions,
   SearchResult,
   ServerAddress,
-  SlskClientOptions
+  SlskClientOptions,
+  UserInfo
 } from './types'
 
 export * from './types'
@@ -51,6 +52,8 @@ const DEFAULT_LOGIN_TIMEOUT = 2000
 const PEER_TIMEOUT = 10000
 /** ms before accepting a transfer a peer announced, some peers need a beat */
 const TRANSFER_ACCEPT_DELAY = 200
+/** ms a peer is given to answer a UserInfoRequest */
+const USER_INFO_TIMEOUT = 10000
 /** How many distributed search requests are remembered to drop the duplicates */
 const MAX_SEEN_SEARCHES = 5000
 
@@ -247,7 +250,8 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     const defaultPeer = new DefaultPeer(socket, peer, {
       session: this.session,
       shared: this.shared,
-      initialData
+      initialData,
+      userInfo: this.options.userInfo
     })
 
     defaultPeer.on('socket-error', err => this.emit('peer-error', err, peer.user))
@@ -322,10 +326,16 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
       return
     }
 
+    if (!peer.peer.host || !peer.peer.port) {
+      // nothing to connect to, and net.createConnection would throw on the missing port
+      download.fail(new Error(`No address to reach ${peer.user}`))
+      return
+    }
+
     debug(`Directly allowed. Connecting to ${peer.user} with PeerInit + ${evt.token}`)
     FilePeer.open({
-      host: peer.peer.host as string,
-      port: peer.peer.port as number,
+      host: peer.peer.host,
+      port: peer.peer.port,
       token: evt.token,
       user: peer.user,
       session: this.session,
@@ -586,6 +596,28 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   }
 
   /**
+   * Asks a peer what it tells about itself: its description, its picture and how busy its
+   * upload queue is. Connects to the peer when there is no connection to it yet.
+   * Rejects when the peer cannot be reached or did not answer before `timeout` ms.
+   */
+  async getUserInfo (user: string, timeout = USER_INFO_TIMEOUT): Promise<UserInfo> {
+    const connection = await this.connectToUser(user)
+    if (!(connection instanceof DefaultPeer)) {
+      throw new Error(`No peer connection to ${user}`)
+    }
+
+    // the listener must be registered before the request is sent
+    const answer = waitFor(connection, 'user-info', {
+      timeout,
+      timeoutError: new Error(`UserInfo timed out for ${user}`)
+    })
+    connection.userInfoRequest()
+
+    const [info] = await answer
+    return info
+  }
+
+  /**
    * Asks a peer for a file and returns the running download, to follow its status and its
    * progress. Resolves as soon as the transfer has been asked for, not when it is done.
    */
@@ -596,7 +628,8 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     const file = obj.file.file
     debug(`launch download ${user} ${file}`)
 
-    const connection = this.peers[user] ?? await this.connectToUser(user)
+    // connectToUser reuses the connection to this peer when there is a usable one
+    const connection = await this.connectToUser(user)
     if (!(connection instanceof DefaultPeer)) {
       throw new Error(`No peer connection to ${user}`)
     }

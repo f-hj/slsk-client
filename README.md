@@ -76,6 +76,7 @@ const client = new SlskClient({ sharedFolders: ['/home/me/music'] })
 |sharedFolders|Folders of the local file system to be shared|[]|
 |shares|One or more [share providers](#sharing), for files that are not on the local file system|[]|
 |timeout|Time in ms before the login attempt fails|2000|
+|userInfo|What is answered to a peer asking for our info: `description`, `picture`, `uploadSlots`, `queueSize`, `slotsFree`, `uploadPermitted`|`{ description: '', uploadSlots: 1, queueSize: 0, slotsFree: true, uploadPermitted: UploadPermission.Everyone }`|Only the keys you set are overridden|
 
 #### login(user, pass): Promise\<void\>
 
@@ -201,6 +202,43 @@ The stream is destroyed with an error when the peer reports a failure.
 
 ##### options
 Same as `download(options)`.
+
+#### getUserInfo(user, timeout?): Promise\<UserInfo\>
+
+Asks a peer what it tells about itself, connecting to it first when needed. Rejects when the peer
+cannot be reached or did not answer before `timeout` ms (10000 by default).
+
+```ts
+const info = await client.getUserInfo('jambon')
+// {
+//   user: 'jambon',
+//   description: 'only lossless here',
+//   picture: <Buffer ...>,   // undefined when the peer has none
+//   uploadSlots: 2,
+//   queueSize: 42,
+//   slotsFree: false,
+//   uploadPermitted: UploadPermission.Everyone
+// }
+```
+
+| key | value | note |
+|-----|-------|------|
+|user|Peer the info is about|
+|description|Free text the peer set as its description|Empty when it has none|
+|picture|Picture the peer shares|`undefined` when it sent none|
+|uploadSlots|Number of upload slots of the peer|
+|queueSize|Files queued for upload on the peer side|Same information as `queueLength` in a search result|
+|slotsFree|true when a slot is free to upload immediately|
+|uploadPermitted|Who the peer accepts uploads from (`UploadPermission`)|`undefined` when the peer did not send the field|
+
+Peers asking *us* the same question are answered with the `userInfo` option of the client, so a
+description of your own is one option away:
+
+```ts
+const client = new SlskClient({
+  userInfo: { description: 'shared from a NodeJS client', queueSize: 0 }
+})
+```
 
 #### connectToUser(user, timeout?): Promise\<Peer\>
 Connects to a peer, directly and through the server at the same time, and resolves with whichever

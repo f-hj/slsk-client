@@ -142,6 +142,13 @@ export default class Message {
     return str
   }
 
+  /** Reads `size` raw bytes, for the fields the protocol sends as a length followed by bytes */
+  readBuffer (size: number): Buffer {
+    const buff = this.data.subarray(this.pointer, this.pointer + size)
+    this.pointer += buff.length
+    return buff
+  }
+
   readRawHexStr (size: number): string {
     const str = this.data.toString('hex', this.pointer, this.pointer + size)
     this.pointer += size

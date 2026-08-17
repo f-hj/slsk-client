@@ -6,6 +6,7 @@ import Message from '../src/utils/message'
 import Messages from '../src/utils/messages'
 import Shared from '../src/share/shared'
 import Session from '../src/session'
+import { UploadPermission, type UserInfo } from '../src/types'
 import type { FileSearchResult } from '../src/peer/default-peer/messages'
 import type { ShareEntry } from '../src/share/provider'
 
@@ -280,19 +281,113 @@ describe('class DefaultPeer', () => {
     assert.deepStrictEqual(result.files, [{ user, file, size: 4, attribs: { 0: 320 } }])
   })
 
-  it('answers a user info request', async () => {
+  it('answers a user info request, which carries nothing but its code', async () => {
     pair.remote.write(new Message()
       .int32(15) // UserInfoRequest
-      .int32(0)
       .getBuff())
 
     const answer = await pair.next()
     answer.int32() // size
     assert.strictEqual(answer.int32(), 16) // UserInfoResponse
-    assert.strictEqual(answer.str(), 'slsk-client')
+    assert.strictEqual(answer.str(), '', 'no description by default')
     assert.strictEqual(answer.int8(), 0) // no picture
-    assert.strictEqual(answer.int32(), 0) // upload slots
+    assert.strictEqual(answer.int32(), 1) // upload slots
     assert.strictEqual(answer.int32(), 0) // queue size
-    assert.strictEqual(answer.int8(), 0) // no free slot
+    assert.strictEqual(answer.int8(), 1) // a slot is free
+    assert.strictEqual(answer.int32(), UploadPermission.Everyone)
+    assert.strictEqual(answer.remaining(), 0)
+  })
+
+  it('answers a user info request with what it was configured with', async () => {
+    const picture = Buffer.from('a picture')
+    // its own pair: the peer of the fixture would answer on the shared socket too
+    const own = await connectedPair()
+    const configured = new DefaultPeer(own.local, { user }, {
+      session,
+      shared,
+      userInfo: {
+        description: 'me and my music',
+        picture,
+        uploadSlots: 2,
+        queueSize: 7,
+        slotsFree: true,
+        uploadPermitted: UploadPermission.Everyone
+      }
+    })
+
+    try {
+      own.remote.write(new Message().int32(15).getBuff())
+
+      const answer = await own.next()
+      answer.int32() // size
+      assert.strictEqual(answer.int32(), 16)
+      assert.strictEqual(answer.str(), 'me and my music')
+      assert.strictEqual(answer.int8(), 1) // has a picture
+      assert.strictEqual(answer.int32(), picture.length)
+      assert.deepStrictEqual(answer.readBuffer(picture.length), picture)
+      assert.strictEqual(answer.int32(), 2) // upload slots
+      assert.strictEqual(answer.int32(), 7) // queue size
+      assert.strictEqual(answer.int8(), 1) // a slot is free
+      assert.strictEqual(answer.int32(), UploadPermission.Everyone)
+    } finally {
+      configured.destroy()
+      own.close()
+    }
+  })
+
+  it('reports what a peer tells about itself', async () => {
+    const received = new Promise<UserInfo>(resolve => peer.once('user-info', resolve))
+    const picture = Buffer.from('cover.jpg contents')
+
+    const msg = new Message()
+      .int32(16) // UserInfoResponse
+      .str('hello from alice')
+      .int8(1) // has a picture
+      .int32(picture.length)
+    msg.writeBuffer(picture)
+    pair.remote.write(msg
+      .int32(3) // upload slots
+      .int32(12) // queue size
+      .int8(1) // a slot is free
+      .int32(UploadPermission.UserList)
+      .getBuff())
+
+    assert.deepStrictEqual(await received, {
+      user,
+      description: 'hello from alice',
+      picture,
+      uploadSlots: 3,
+      queueSize: 12,
+      slotsFree: true,
+      uploadPermitted: UploadPermission.UserList
+    } satisfies UserInfo)
+  })
+
+  it('reports the info of a peer that stops after the description', async () => {
+    const received = new Promise<UserInfo>(resolve => peer.once('user-info', resolve))
+
+    pair.remote.write(new Message()
+      .int32(16)
+      .str('short and sweet')
+      .int8(0) // no picture
+      .getBuff())
+
+    assert.deepStrictEqual(await received, {
+      user,
+      description: 'short and sweet',
+      picture: undefined,
+      uploadSlots: 0,
+      queueSize: 0,
+      slotsFree: false,
+      uploadPermitted: undefined
+    } satisfies UserInfo)
+  })
+
+  it('sends a user info request', async () => {
+    peer.userInfoRequest()
+
+    const sent = await pair.next()
+    assert.strictEqual(sent.int32(), 4, 'the code is the whole payload')
+    assert.strictEqual(sent.int32(), 15)
   })
 })

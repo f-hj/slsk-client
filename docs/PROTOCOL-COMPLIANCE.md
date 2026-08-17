@@ -67,7 +67,9 @@ Implemented in [`src/peer/default-peer/`](../src/peer/default-peer/).
 | 5 | SharedFileListResponse (recv) | same | Not handled (client never browses shares) | ❌ |
 | 9 | FileSearchResponse (send) | zlib: user, token, n × (code **1**, filename, uint64 size, ext, attrs), bool slotfree, uint32 avgspeed, uint32 queue, uint32 unknown, private results | zlib ✅, file code 1 ✅, real extension ✅, uint64 sizes ✅, slotfree/avgspeed/queue configurable ✅, trailing unknown + private-results count ✅ | ✅ |
 | 9 | FileSearchResponse (recv) | same | zlib ✅; parses user, token, files incl. attributes (bitrate/duration/vbr/… surfaced), uint64 sizes ✅, slotfree, avgspeed, queue length; tolerates truncated trailing fields from older peers | ✅ |
-| 15/16 | UserInfoRequest/Response | — | Not implemented (peers asking for our info get no answer) | ❌ |
+| 15 | UserInfoRequest (send/recv) | empty | Sent by `getUserInfo(user)`. Inbound: answered with UserInfoResponse built from the `userInfo` option | ✅ |
+| 16 | UserInfoResponse (send) | description, bool has_picture, [picture], uint32 uploadslots, uint32 queuesize, bool slotsfree, [uint32 uploadpermitted] | All fields, picture and upload permission included, from the `userInfo` option | ✅ |
+| 16 | UserInfoResponse (recv) | same | Parsed and surfaced by `getUserInfo()`; peers that stop after any field are tolerated, and a picture shorter than announced is dropped | ✅ |
 | 36 | FolderContentsRequest (recv) | **uint32 token, string folder** | Parsed as documented and answered with FolderContentsResponse (37) built from the index | ✅ |
 | 37 | FolderContentsResponse | zlib folder listing | Echoes the token and the requested folder, then the folder → files structure, zlib compressed | ✅ |
 | 40 | TransferRequest (send) | dir 0: direction, token, filename | Only sent when a download opts into the legacy flow with `request: 'transfer'`; the default download path uses QueueUpload (43) | ✅ (legacy opt-in) |
@@ -138,7 +140,11 @@ Shares come from [`ShareProvider`](../src/share/provider.ts) implementations (lo
 
 What is still missing is serving the bytes: TransferRequest(dir 1) is never sent, QueueUpload(43) and TransferRequest(dir 0) are answered with a denial, PlaceInQueueRequest(51) answers nothing, and no file connection is ever opened as the uploader. The `read(entry, { start })` side of the provider interface exists for it and is unused so far.
 
-### 6.7 Chat, rooms, user info, interests — ❌ not implemented (declared out of scope)
+### 6.7 User info — ✅ both ways
+
+`getUserInfo(user)` asks a peer with UserInfoRequest(15) and resolves with what it answers, picture included. Incoming requests are answered from the `userInfo` client option. Note that this is the *peer* message: the server-side GetUserStats(36)/GetUserStatus(7) are still not implemented.
+
+### 6.8 Chat, rooms, interests — ❌ not implemented (declared out of scope)
 
 ---
 

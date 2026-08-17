@@ -1,7 +1,8 @@
 import zlib from 'zlib'
 import Message from '../../utils/message'
 import { extensionOf, folderOf } from '../../share/virtual-path'
-import type { FileAttribute } from '../../types'
+import { UploadPermission } from '../../types'
+import type { FileAttribute, UserInfo, UserInfoOptions } from '../../types'
 import type { ShareEntry } from '../../share/provider'
 
 /** A file of a search answer, as a peer sent it */
@@ -31,11 +32,15 @@ export interface FileSearchResultOptions {
   queueLength?: number
 }
 
-export interface UserInfoOptions {
-  description?: string
-  uploadSlots?: number
-  queueSize?: number
-  slotsFree?: boolean
+export type { UserInfoOptions }
+
+/** Answered to a peer asking for our info when nothing else was configured */
+export const DEFAULT_USER_INFO: UserInfoOptions = {
+  description: '',
+  uploadSlots: 1,
+  queueSize: 0,
+  slotsFree: true,
+  uploadPermitted: UploadPermission.Everyone
 }
 
 /** A transfer a peer asked for, in one direction or the other */
@@ -151,15 +156,35 @@ const defaultPeerMessages = {
       .int32(9)
       .writeBuffer(zlib.deflateSync(msg.data))
   },
-  /** UserInfoResponse (16) */
+  /** UserInfoRequest (15): asks a peer what it tells about itself */
+  userInfoRequest: (): Message => {
+    return new Message().int32(15)
+  },
+  /** UserInfoResponse (16), the fields left out filled with {@link DEFAULT_USER_INFO} */
   userInfoResponse: (options: UserInfoOptions = {}): Message => {
-    return new Message()
+    const info = { ...DEFAULT_USER_INFO, ...options }
+
+    const msg = new Message()
       .int32(16)
-      .str(options.description ?? '')
-      .int8(0) // no picture
-      .int32(options.uploadSlots ?? 0)
-      .int32(options.queueSize ?? 0)
-      .int8(options.slotsFree === true ? 1 : 0)
+      .str(info.description ?? '')
+
+    if (info.picture && info.picture.length > 0) {
+      msg.int8(1)
+      // a picture is sent as its length followed by its bytes
+      msg.int32(info.picture.length)
+      msg.writeBuffer(info.picture)
+    } else {
+      msg.int8(0)
+    }
+
+    msg.int32(info.uploadSlots ?? 0)
+    msg.int32(info.queueSize ?? 0)
+    msg.int8(info.slotsFree === true ? 1 : 0)
+
+    // trailing field, left out when it is explicitly unset
+    if (info.uploadPermitted !== undefined) msg.int32(info.uploadPermitted)
+
+    return msg
   },
   /**
    * TransferRequest (40) with direction 0: the legacy way of asking for a download.
@@ -240,6 +265,39 @@ export function parseFileSearchResult (buffer: Buffer): FileSearchResult {
     slots,
     speed,
     queueLength
+  }
+}
+
+/**
+ * Reads a UserInfoResponse (16), the message pointer sitting right after its code.
+ * Peers stop at different fields, so everything after the description is optional.
+ */
+export function parseUserInfo (msg: Message, user: string): UserInfo {
+  const description = msg.str()
+
+  let picture: Buffer | undefined
+  if (msg.remaining() >= 1 && msg.int8() === 1 && msg.remaining() >= 4) {
+    const length = msg.int32()
+    const bytes = msg.readBuffer(length)
+    // a peer announcing a picture it then truncates is not one to trust the size of
+    if (bytes.length === length && length > 0) picture = bytes
+  }
+
+  const uploadSlots = msg.remaining() >= 4 ? msg.int32() : 0
+  const queueSize = msg.remaining() >= 4 ? msg.int32() : 0
+  const slotsFree = msg.remaining() >= 1 ? msg.int8() === 1 : false
+  const uploadPermitted = msg.remaining() >= 4
+    ? msg.int32() as UploadPermission
+    : undefined
+
+  return {
+    user,
+    description,
+    picture,
+    uploadSlots,
+    queueSize,
+    slotsFree,
+    uploadPermitted
   }
 }
 

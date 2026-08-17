@@ -1,6 +1,6 @@
 import zlib from 'zlib'
 import createDebug from 'debug'
-import messages, { parseFileSearchResult } from './messages'
+import messages, { parseFileSearchResult, parseUserInfo } from './messages'
 import type Message from '../../utils/message'
 import type DefaultPeer from './default-peer'
 
@@ -14,7 +14,8 @@ const debug = createDebug('slsk:peer:default:i')
 export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPeer): void {
   const user = peer.user
   const size = msg.int32()
-  if (size <= 4) return
+  // 4 is a message carrying nothing but its code, GetSharedFileList and UserInfoRequest do
+  if (size < 4) return
 
   const code = msg.int32()
   switch (code) {
@@ -48,10 +49,19 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
     }
     case 15: {
       debug(`${user} recv UserInfoRequest`)
-      peer.send(messages.userInfoResponse({
-        description: 'slsk-client',
-        slotsFree: false
-      }))
+      peer.send(messages.userInfoResponse(peer.userInfo))
+      break
+    }
+    case 16: {
+      debug(`${user} recv UserInfoResponse`)
+      let info
+      try {
+        info = parseUserInfo(msg, user)
+      } catch (parseError) {
+        debug(`${user} cannot parse UserInfoResponse: ${String(parseError)}`)
+        break
+      }
+      peer.emit('user-info', info)
       break
     }
     case 36: {

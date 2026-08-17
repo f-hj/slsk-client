@@ -9,14 +9,55 @@ import type { ServerAddress } from '../src/types'
 
 const debug = createDebug('slsk:mock:peer:default:i')
 
+/** UserInfoResponse (16), as a real peer puts it on the wire */
+function userInfoResponse (info: MockUserInfo): Buffer {
+  const msg = new Message()
+    .int32(16)
+    .str(info.description)
+
+  if (info.picture) {
+    msg.int8(1)
+    msg.int32(info.picture.length)
+    msg.writeBuffer(info.picture)
+  } else {
+    msg.int8(0)
+  }
+
+  msg
+    .int32(info.uploadSlots)
+    .int32(info.queueSize)
+    .int8(info.slotsFree ? 1 : 0)
+
+  if (info.uploadPermitted !== undefined) msg.int32(info.uploadPermitted)
+
+  return msg.getBuff()
+}
+
 export interface MockDefaultPeerEvents {
   'file-search-result': [result: FileSearchResult]
+  /** The client asked what this peer tells about itself */
+  'user-info-request': []
+}
+
+/** Info a mock peer answers with, written by hand so the parser is checked against real bytes */
+export interface MockUserInfo {
+  description: string
+  picture?: Buffer
+  uploadSlots: number
+  queueSize: number
+  slotsFree: boolean
+  uploadPermitted?: number
+}
+
+export interface MockDefaultPeerOptions {
+  /** Answered to a UserInfoRequest, nothing is answered when unset */
+  userInfo?: MockUserInfo
 }
 
 export default class MockDefaultPeer extends EventEmitter<MockDefaultPeerEvents> {
   private server: net.Server
 
-  constructor (address: ServerAddress) {
+  constructor (address: ServerAddress, readonly options: MockDefaultPeerOptions = {}) {
     super()
 
     this.server = net.createServer(client => {
@@ -43,6 +84,13 @@ export default class MockDefaultPeer extends EventEmitter<MockDefaultPeerEvents>
 
               this.emit('file-search-result', parseFileSearchResult(buffer))
             })
+            break
+          }
+          case 15: {
+            debug('recv UserInfoRequest')
+            this.emit('user-info-request')
+            const info = this.options.userInfo
+            if (info) client.write(userInfoResponse(info))
             break
           }
           default: {

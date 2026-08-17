@@ -22,6 +22,11 @@ export interface SlskClientOptions {
   shares?: ShareProvider | ShareProvider[]
   /** Time in ms after which the login attempt fails (default: 2000) */
   timeout?: number
+  /**
+   * What is answered to a peer asking for our info with a UserInfoRequest
+   * (default: no description, one free slot, nothing queued and uploads open to everyone)
+   */
+  userInfo?: UserInfoOptions
 }
 
 export interface SearchOptions {
@@ -123,6 +128,50 @@ export interface DownloadResult {
   receivedBytes: number
   /** Size announced by the peer, when known: a smaller `receivedBytes` means a partial file */
   size?: number
+}
+
+/** Who a peer accepts uploads from, as sent at the end of a UserInfoResponse */
+export enum UploadPermission {
+  NoOne = 0,
+  Everyone = 1,
+  /** Only the users of its buddy list */
+  UserList = 2,
+  /** Only the users it explicitly allowed */
+  PermittedList = 3
+}
+
+/** What a peer tells about itself, its answer to a UserInfoRequest */
+export interface UserInfo {
+  /** Peer the info is about */
+  user: string
+  /** Free text the peer set as its description, empty when it has none */
+  description: string
+  /** Picture the peer shares, undefined when it sent none */
+  picture?: Buffer
+  /** Number of upload slots of the peer */
+  uploadSlots: number
+  /** Number of files queued for upload on the peer side */
+  queueSize: number
+  /** true when a slot is free to upload immediately */
+  slotsFree: boolean
+  /** Who the peer accepts uploads from, undefined when it did not send the field */
+  uploadPermitted?: UploadPermission
+}
+
+/** What this client answers to a peer asking for our info */
+export interface UserInfoOptions {
+  /** Free text sent as our description (default: slsk-client) */
+  description?: string
+  /** Picture sent along the description, none by default */
+  picture?: Buffer
+  /** Number of upload slots we advertise (default: 1) */
+  uploadSlots?: number
+  /** Number of files we advertise as queued for upload (default: 0) */
+  queueSize?: number
+  /** true to advertise a free upload slot (default: true) */
+  slotsFree?: boolean
+  /** Who we tell the peer we accept uploads from (default: everyone) */
+  uploadPermitted?: UploadPermission
 }
 
 export interface PeerInfo {

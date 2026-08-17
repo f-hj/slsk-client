@@ -11,7 +11,7 @@ import messages, {
 import handleDefaultPeerMessage from './handler'
 import type Message from '../../utils/message'
 import type Shared from '../../share/shared'
-import type { PeerInfo } from '../../types'
+import type { PeerInfo, UserInfo, UserInfoOptions } from '../../types'
 import type { ShareEntry } from '../../share/provider'
 
 const debug = createDebug('slsk:peer:default:i')
@@ -21,6 +21,8 @@ export interface DefaultPeerOptions extends PeerOptions {
   shared?: Shared
   /** Bytes already received on the socket, after the peer init message */
   initialData?: Buffer
+  /** What is answered to a UserInfoRequest, `DEFAULT_USER_INFO` fills what is left out */
+  userInfo?: UserInfoOptions
 }
 
 export type { TransferRequestEvent, TransferResponseEvent }
@@ -38,6 +40,8 @@ export type DefaultPeerEvents = {
   'upload-failed': [file: string]
   /** The peer refuses to upload a file, with its reason */
   'upload-denied': [evt: { file: string, reason: string }]
+  /** What the peer tells about itself, its answer to a UserInfoRequest */
+  'user-info': [info: UserInfo]
 }
 
 /**
@@ -47,10 +51,13 @@ export type DefaultPeerEvents = {
 export default class DefaultPeer extends Peer<DefaultPeerEvents> {
   /** Shared files, used to answer share browsing and folder content requests */
   readonly shared?: Shared
+  /** What is answered to a UserInfoRequest of this peer, the defaults fill what is left out */
+  readonly userInfo?: UserInfoOptions
 
   constructor (socket: net.Socket, peer: PeerInfo, options: DefaultPeerOptions) {
     super(socket, peer, options)
     this.shared = options.shared
+    this.userInfo = options.userInfo
 
     this.conn.on('connect', () => {
       if (peer.token) {
@@ -73,6 +80,12 @@ export default class DefaultPeer extends Peer<DefaultPeerEvents> {
     if (options.initialData && options.initialData.length > 0) {
       msgs.write(options.initialData)
     }
+  }
+
+  /** UserInfoRequest (15): asks the peer what it tells about itself */
+  userInfoRequest (): void {
+    debug(`User info request to ${this.user}`)
+    this.send(messages.userInfoRequest())
   }
 
   /** TransferRequest (40) direction 0: legacy way of asking for a download */
