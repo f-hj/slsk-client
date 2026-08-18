@@ -1,6 +1,6 @@
 import zlib from 'zlib'
 import Message from '../../utils/message'
-import { extensionOf, folderOf } from '../../share/virtual-path'
+import { baseNameOf, extensionOf, folderOf } from '../../share/virtual-path'
 import { UploadPermission } from '../../types'
 import type { FileAttribute, UserInfo, UserInfoOptions } from '../../types'
 import type { ShareEntry } from '../../share/provider'
@@ -76,8 +76,12 @@ function byFolder (files: ShareEntry[]): Map<string, ShareEntry[]> {
   return folders
 }
 
-/** Writes a single file entry (code 1, name, size, extension, attributes) */
-function writeFile (msg: Message, file: ShareEntry): void {
+/**
+ * Writes a single file entry (code 1, name, size, extension, attributes).
+ * `name` is the whole virtual path in a search answer, but only the base name in a folder
+ * listing, where the folder it belongs to is written next to it.
+ */
+function writeFile (msg: Message, file: ShareEntry, name: string): void {
   const attribs = file.attribs
     ? Object.keys(file.attribs)
       .map(Number)
@@ -86,7 +90,7 @@ function writeFile (msg: Message, file: ShareEntry): void {
     : []
 
   msg.int8(1) // code, always 1 for a file
-  msg.str(file.path)
+  msg.str(name)
   msg.int64(file.size)
   msg.str(extensionOf(file.path))
   msg.int32(attribs.length)
@@ -102,7 +106,8 @@ function writeFolders (msg: Message, folders: Map<string, ShareEntry[]>): void {
   folders.forEach((entries, folder) => {
     msg.str(folder)
     msg.int32(entries.length)
-    entries.forEach(file => writeFile(msg, file))
+    // the folder is on the line above, a browsing peer expects the base name here
+    entries.forEach(file => writeFile(msg, file, baseNameOf(file.path)))
   })
 }
 
@@ -144,7 +149,8 @@ const defaultPeerMessages = {
       .rawHexStr(token)
       .int32(files.length)
 
-    files.forEach(file => writeFile(msg, file))
+    // a search answer has no folder to root the files in, they carry their whole path
+    files.forEach(file => writeFile(msg, file, file.path))
 
     msg.int8(options.slotsFree === false ? 0 : 1) // free upload slot
     msg.int32(options.avgSpeed ?? 0)
@@ -240,7 +246,7 @@ export function parseFileSearchResult (buffer: Buffer): FileSearchResult {
     msg.int8() // code
     const filename = msg.str()
     const filesize = msg.int64()
-    msg.str() // ext
+    msg.str() // ext, obsolete and ignored by current clients
     const nbAttrib = msg.int32()
     const attribs: Record<number, number> = {}
     for (let attrib = 0; attrib < nbAttrib; attrib++) {
