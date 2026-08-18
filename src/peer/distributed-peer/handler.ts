@@ -62,6 +62,5 @@ function handleSearchRequest (msg: Message, peer: DistributedPeer): void {
   const ticket = msg.readRawHexStr(4)
   const query = msg.str()
   // the same request reaches us from several parents, the client drops the duplicates
-  debug(`${peer.user} Search Request from ${user}, ticket ${ticket}. query: ${query}`)
   peer.emit('search', { user, ticket, query } satisfies PeerSearchRequest)
 }
