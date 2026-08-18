@@ -48,7 +48,7 @@ export default function createFileTransferHandler (peer: FilePeer): (data: Buffe
 
       peer.token = fileMessages.parseToken(data)
       tokenRead = true
-      debug(`recv transfer token ${peer.token} from ${peer.user}`)
+      debug(`${peer.user} recv FileTransferInit, token ${peer.token}`)
       peer.resolveDownload()
       peer.sendOffset()
       onFileData(data.subarray(TOKEN_SIZE))

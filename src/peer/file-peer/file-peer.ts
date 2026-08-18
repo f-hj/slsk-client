@@ -142,7 +142,7 @@ export default class FilePeer extends Peer {
     }
     this.offsetSent = true
     const offset = this.resolveDownload()?.offset ?? 0
-    debug(`send file offset ${offset} to ${this.user}`)
+    debug(`${this.user} send FileOffset ${offset}`)
     this.conn.write(fileMessages.offset(offset))
   }
 

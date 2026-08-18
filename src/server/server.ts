@@ -4,6 +4,7 @@ import createDebug from 'debug'
 import Messages from '../utils/messages'
 import messages from './messages'
 import handleServerMessage from './handler'
+import { SERVER_MESSAGES, nameOf } from '../utils/message-names'
 import type Message from '../utils/message'
 import type { PeerInfo, ServerAddress } from '../types'
 
@@ -65,7 +66,14 @@ export default class Server extends EventEmitter<ServerEvents> {
     msgs.on('message', (msg: Message) => handleServerMessage(msg, this))
   }
 
-  private write (msg: Message): void {
+  /**
+   * Writes a message and logs what it is. The code is the first field, so reading it back names
+   * every message that goes out without repeating the name at each call site; `detail` carries
+   * the values worth seeing next to it.
+   */
+  private write (msg: Message, detail?: string): void {
+    const name = nameOf(SERVER_MESSAGES, msg.data.readUInt32LE(0))
+    debug(`send ${name}, ${msg.data.length} bytes${detail ? `: ${detail}` : ''}`)
     this.conn.write(msg.getBuff())
   }
 
@@ -82,12 +90,12 @@ export default class Server extends EventEmitter<ServerEvents> {
   }
 
   login (credentials: { user: string, pass: string }): void {
-    this.write(messages.login(credentials))
+    // the password is never logged, only the name it is sent for
+    this.write(messages.login(credentials), credentials.user)
   }
 
   fileSearch (query: string, token: string): void {
-    debug(`send FileSearch: ${query}`)
-    this.write(messages.fileSearch(query, token))
+    this.write(messages.fileSearch(query, token), `"${query}" token ${token}`)
   }
 
   setWaitPort (port: number): void {
@@ -96,31 +104,26 @@ export default class Server extends EventEmitter<ServerEvents> {
       debug(`queue SetWaitPort ${port} until login`)
       return
     }
-    debug(`send SetWaitPort ${port}`)
-    this.write(messages.setWaitPort(port))
+    this.write(messages.setWaitPort(port), String(port))
   }
 
   /** SetStatus (28): 1 away, 2 online */
   setStatus (status: number): void {
-    debug(`send SetStatus ${status}`)
-    this.write(messages.setStatus(status))
+    this.write(messages.setStatus(status), status === 1 ? 'away' : 'online')
   }
 
   getPeerAddress (username: string): void {
-    debug(`send GetPeerAddress ${username}`)
-    this.write(messages.getPeerAddress(username))
+    this.write(messages.getPeerAddress(username), username)
   }
 
   /** Asks the server to tell a peer to connect to us, used when we cannot reach it directly */
   connectToPeer (token: string, username: string, type = 'P'): void {
-    debug(`send ConnectToPeer ${username} type ${type} token ${token}`)
-    this.write(messages.connectToPeer(token, username, type))
+    this.write(messages.connectToPeer(token, username, type), `${username} type ${type} token ${token}`)
   }
 
   /** Tells the server we could not connect to a peer it asked us to reach */
   cantConnectToPeer (token: string, username: string): void {
-    debug(`send CantConnectToPeer ${username} token ${token}`)
-    this.write(messages.cantConnectToPeer(token, username))
+    this.write(messages.cantConnectToPeer(token, username), `${username} token ${token}`)
   }
 
   /** Announces how much we share, sent again after every folder scan */
@@ -130,31 +133,27 @@ export default class Server extends EventEmitter<ServerEvents> {
       debug(`queue SharedFoldersFiles ${folders} folders, ${files} files until login`)
       return
     }
-    debug(`send SharedFoldersFiles ${folders} folders, ${files} files`)
-    this.write(messages.sharedFoldersFiles(folders, files))
+    this.write(messages.sharedFoldersFiles(folders, files), `${folders} folders, ${files} files`)
   }
 
   /** Tells the server whether we are looking for a distributed parent */
   haveNoParents (flag: boolean): void {
-    debug(`send HaveNoParent ${String(flag)}`)
-    this.write(messages.haveNoParents(flag))
+    this.write(messages.haveNoParents(flag), String(flag))
   }
 
   /** ParentIP (73): address of the parent we picked */
   parentIp (ip: number[]): void {
-    this.write(messages.parentIp(ip))
+    this.write(messages.parentIp(ip), ip.join('.'))
   }
 
   /** Reports our distance to the root of the distributed network */
   branchLevel (level: number): void {
-    debug(`send BranchLevel ${level}`)
-    this.write(messages.branchLevel(level))
+    this.write(messages.branchLevel(level), String(level))
   }
 
   /** Reports the root of our branch of the distributed network */
   branchRoot (root: string): void {
-    debug(`send BranchRoot ${root}`)
-    this.write(messages.branchRoot(root))
+    this.write(messages.branchRoot(root), root)
   }
 
   destroy (): void {

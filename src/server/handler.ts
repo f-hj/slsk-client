@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import createDebug from 'debug'
+import { SERVER_MESSAGES, nameOf } from '../utils/message-names'
 import type Message from '../utils/message'
 import type Server from './server'
 import type { PeerInfo } from '../types'
@@ -16,18 +17,20 @@ export default function handleServerMessage (msg: Message, server: Server): void
   if (size < 4) return
 
   const code = msg.int32()
+  debug(`recv ${nameOf(SERVER_MESSAGES, code)}, ${size} bytes`)
+
   switch (code) {
     case 1: {
-      debug('Login Response')
       const success = msg.int8()
       if (success === 1) {
         const greet = msg.str()
-        debug(`Login succeed: ${greet}`)
+        debug(`logged in: ${greet}`)
         // the server drops everything sent before a successful login, announce again
         server.onLoggedIn()
         server.emit('login', { success: true, greet })
       } else {
         const reason = msg.str()
+        debug(`login refused: ${reason}`)
         server.emit('login', { success: false, reason })
       }
       break
@@ -43,7 +46,7 @@ export default function handleServerMessage (msg: Message, server: Server): void
       const user = msg.str()
       const status = msg.int32()
       const privileged = msg.remaining() >= 1 ? msg.int8() : 0
-      debug(`recv GetUserStatus for ${user}: ${status}, privileged: ${privileged}`)
+      debug(`${user} is ${status}, privileged: ${privileged}`)
       break
     }
     case 18: {
@@ -62,11 +65,10 @@ export default function handleServerMessage (msg: Message, server: Server): void
       const something = msg.int32()
       const files = msg.int32()
       const folders = msg.int32()
-      debug(`recv GetUserStats user: ${user}, avgSpeed ${avgSpeed}, files ${files}, folders ${folders}. downloadNum ${downloadNum}. something... ${something}`)
+      debug(`${user}: avgSpeed ${avgSpeed}, files ${files}, folders ${folders}. downloadNum ${downloadNum}. something... ${something}`)
       break
     }
     case 64: {
-      debug(`recv RoomList ${msg.data.length}`)
       const nbRooms = msg.int32()
       const rooms: Array<{ name: string, users?: number }> = []
       for (let i = 0; i < nbRooms; i++) {
@@ -83,22 +85,22 @@ export default function handleServerMessage (msg: Message, server: Server): void
     }
     case 69: {
       const number = msg.int32()
-      debug(`there are ${number} PrivilegedUsers. msg length: ${msg.data.length}`)
+      debug(`${number} privileged users`)
       break
     }
     case 83: {
       const number = msg.int32()
-      debug(`ParentMinSpeed is ${number}. msg length: ${msg.data.length}`)
+      debug(`min speed ${number}`)
       break
     }
     case 84: {
       const number = msg.int32()
-      debug(`ParentSpeedRatio is ${number}. msg length: ${msg.data.length}`)
+      debug(`speed ratio ${number}`)
       break
     }
     case 102: {
       const numberOfParents = msg.int32()
-      debug(`recv NetInfo, number of search parents: ${numberOfParents}`)
+      debug(`${numberOfParents} possible parents`)
       for (let i = 0; i < numberOfParents; i++) {
         const user = msg.str()
         const { ip, host } = readAddress(msg)
@@ -118,7 +120,7 @@ export default function handleServerMessage (msg: Message, server: Server): void
     }
     case 104: {
       const number = msg.int32()
-      debug(`Whishlist interval is ${number}. msg length: ${msg.data.length}`)
+      debug(`interval ${number}`)
       break
     }
     case 160: {
@@ -128,17 +130,17 @@ export default function handleServerMessage (msg: Message, server: Server): void
       for (let i = 0; i < number && msg.remaining() >= 4; i++) {
         phrases.push(msg.str())
       }
-      debug(`recv ExcludedSearchPhrases, ${phrases.length} of ${number}: ${phrases.join(', ')}`)
+      debug(`${phrases.length} of ${number}: ${phrases.join(', ')}`)
       break
     }
     case 1001: {
       const token = msg.readRawHexStr(4)
-      debug(`Cannot connect to peer, token ${token}`)
+      debug(`the server could not reach the peer of token ${token}`)
       server.emit('cant-connect-to-peer', { token })
       break
     }
     default: {
-      debug(`unknown srv message code: ${code} length: ${msg.data.length}`)
+      debug(`nothing is done with ${nameOf(SERVER_MESSAGES, code)}`)
     }
   }
 }

@@ -1,6 +1,7 @@
 import zlib from 'zlib'
 import createDebug from 'debug'
 import messages, { parseFileSearchResult, parseUserInfo } from './messages'
+import { PEER_MESSAGES, nameOf } from '../../utils/message-names'
 import type Message from '../../utils/message'
 import type DefaultPeer from './default-peer'
 
@@ -18,16 +19,15 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
   if (size < 4) return
 
   const code = msg.int32()
+  debug(`${user} recv ${nameOf(PEER_MESSAGES, code)}, ${size} bytes`)
+
   switch (code) {
     case 4: {
-      debug(`${user} recv GetSharedFileList ${size}`)
       const files = peer.shared ? peer.shared.files : []
-      debug(`${user} sending SharedFileList with ${files.length} files`)
-      peer.send(messages.sharedFileList(files))
+      peer.send(messages.sharedFileList(files), `${files.length} files`)
       break
     }
     case 9: {
-      debug(`${user} recv FileSearchResult size ${size}`)
       const content = msg.data.subarray(msg.pointer, size + 4)
       zlib.unzip(content, (err, buffer) => {
         if (err) {
@@ -48,12 +48,10 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
       break
     }
     case 15: {
-      debug(`${user} recv UserInfoRequest`)
       peer.send(messages.userInfoResponse(peer.userInfo))
       break
     }
     case 16: {
-      debug(`${user} recv UserInfoResponse`)
       let info
       try {
         info = parseUserInfo(msg, user)
@@ -67,11 +65,10 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
     case 36: {
       const token = msg.rawHexStr(4)
       const folder = msg.str()
-      debug(`${user} recv FolderContentsRequest for ${folder}`)
+      debug(`${user} wants the contents of ${folder}`)
       if (!peer.shared) break
       const files = peer.shared.filesInFolder(folder)
-      debug(`${user} sending FolderContentsResponse with ${files.length} files`)
-      peer.send(messages.folderContentsResponse(token, folder, files))
+      peer.send(messages.folderContentsResponse(token, folder, files), `${folder}, ${files.length} files`)
       break
     }
     case 40: {
@@ -79,7 +76,7 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
       const token = msg.rawHexStr(4)
       const file = msg.str()
       const size = direction === 1 ? msg.int64() : undefined
-      debug(`${user} recv TransferRequest direction ${direction} ${file}`)
+      debug(`${user} direction ${direction}, ${file}`)
       peer.emit('transfer-request', { direction, token, file, size })
       break
     }
@@ -87,43 +84,43 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
       const token = msg.rawHexStr(4)
       const allowed = msg.int8() === 1
       const reason = allowed ? undefined : msg.str()
-      debug(`${user} recv TransferResponse token: ${token} allowed: ${String(allowed)}`)
+      debug(`${user} token ${token} allowed ${String(allowed)}${reason ? ` (${reason})` : ''}`)
       peer.emit('transfer-response', { token, allowed, reason })
       break
     }
     case 43: {
       const file = msg.str()
-      debug(`${user} recv QueueUpload ${file}, uploading is not supported`)
+      debug(`${user} wants ${file}, uploading is not supported`)
       peer.uploadDenied(file, 'Cancelled')
       break
     }
     case 44: {
       const file = msg.str()
       const place = msg.int32()
-      debug(`${user} recv PlaceInQueueResponse ${file}: ${place}`)
+      debug(`${user} places us at ${place} for ${file}`)
       peer.emit('place-in-queue', { file, place })
       break
     }
     case 46: {
       const file = msg.str()
-      debug(`${user} UploadFailed ${file}`)
+      debug(`${user} gave up on ${file}`)
       peer.emit('upload-failed', file)
       break
     }
     case 50: {
       const file = msg.str()
       const reason = msg.str()
-      debug(`${user} UploadDenied ${file} reason ${reason}`)
+      debug(`${user} refuses ${file}: ${reason}`)
       peer.emit('upload-denied', { file, reason })
       break
     }
     case 51: {
       const file = msg.str()
-      debug(`${user} recv PlaceInQueueRequest ${file}, nothing is queued`)
+      debug(`${user} asks its place for ${file}, nothing is queued`)
       break
     }
     default: {
-      debug(`${user} unknown peer message code ${code}`)
+      debug(`${user} nothing is done with ${nameOf(PEER_MESSAGES, code)}`)
     }
   }
 }

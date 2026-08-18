@@ -1,4 +1,5 @@
 import createDebug from 'debug'
+import { DISTRIBUTED_MESSAGES, nameOf } from '../../utils/message-names'
 import type Message from '../../utils/message'
 import type DistributedPeer from './distributed-peer'
 import type { PeerSearchRequest } from '../../types'
@@ -14,7 +15,18 @@ export default function handleDistributedPeerMessage (msg: Message, peer: Distri
   const size = msg.int32()
   if (size <= 4) return
 
-  handleCode(msg.int8(), msg, peer)
+  const code = msg.int8()
+  // every search of the whole network travels through here, several times a second: logging
+  // them one by one buries everything else, so only what is not a search is named
+  if (!isSearch(code)) {
+    debug(`${peer.user} recv ${nameOf(DISTRIBUTED_MESSAGES, code)}, ${size} bytes`)
+  }
+  handleCode(code, msg, peer)
+}
+
+/** true for the messages carrying a search, directly or embedded by our branch root */
+function isSearch (code: number): boolean {
+  return code === 3 || code === 93
 }
 
 function handleCode (code: number, msg: Message, peer: DistributedPeer): void {
@@ -22,7 +34,7 @@ function handleCode (code: number, msg: Message, peer: DistributedPeer): void {
 
   switch (code) {
     case 0: {
-      debug(`${user} DistribPing`)
+      // DistribPing, named by the line above, nothing to answer
       break
     }
     case 3: {
@@ -44,14 +56,16 @@ function handleCode (code: number, msg: Message, peer: DistributedPeer): void {
     case 93: {
       // the server sends searches this way when it acts as our branch root
       const embedded = msg.int8()
-      debug(`${user} DistribEmbeddedMessage, embedded code ${embedded}`)
       if (embedded === 3) {
         handleSearchRequest(msg, peer)
+        break
       }
+      // anything else embedded is unexpected and rare enough to be worth a line
+      debug(`${user} recv ${nameOf(DISTRIBUTED_MESSAGES, code)} wrapping code ${embedded}`)
       break
     }
     default: {
-      debug(`${user} unknown distributed message code ${code}`)
+      debug(`${user} nothing is done with ${nameOf(DISTRIBUTED_MESSAGES, code)}`)
     }
   }
 }

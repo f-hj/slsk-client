@@ -2,6 +2,7 @@ import EventEmitter from 'events'
 import type net from 'net'
 import createDebug from 'debug'
 import peerMessages from './messages'
+import { INIT_MESSAGES, nameOf } from '../utils/message-names'
 import type Message from '../utils/message'
 import type Session from '../session'
 import type { PeerInfo } from '../types'
@@ -75,18 +76,33 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
   }
 
   /** Sends a message on the connection, its size prefix included */
-  send (msg: Message): void {
+  send (msg: Message, detail?: string): void {
+    this.logSent(msg, detail)
+    this.conn.write(msg.getBuff())
+  }
+
+  /**
+   * Names what is being sent, so every connection logs its traffic. Subclasses override it with
+   * the table of the messages they carry: only the init messages are shared by every type.
+   */
+  protected logSent (msg: Message, detail?: string): void {
+    debug(`${this.user} send ${msg.data.length} bytes${detail ? `: ${detail}` : ''}`)
+  }
+
+  /** Sends an init message, whose code is a single byte, unlike the rest of a connection */
+  private sendInit (msg: Message): void {
+    debug(`${this.user} send ${nameOf(INIT_MESSAGES, msg.data.readUInt8(0))}, ${msg.data.length} bytes`)
     this.conn.write(msg.getBuff())
   }
 
   /** PierceFireWall (0): answers a connection the server asked this peer to open */
   protected sendPierceFw (token: string): void {
-    this.send(peerMessages.pierceFw(token))
+    this.sendInit(peerMessages.pierceFw(token))
   }
 
   /** PeerInit (1): introduces us on a connection we opened ourselves */
   protected sendPeerInit (type: string, token: string): void {
-    this.send(peerMessages.peerInit(this.session.username, type, token))
+    this.sendInit(peerMessages.peerInit(this.session.username, type, token))
   }
 
   setAddress (host: string, port: number): void {

@@ -9,6 +9,7 @@ import messages, {
   type TransferResponseEvent
 } from './messages'
 import handleDefaultPeerMessage from './handler'
+import { PEER_MESSAGES, nameOf } from '../../utils/message-names'
 import type Message from '../../utils/message'
 import type Shared from '../../share/shared'
 import type { PeerInfo, UserInfo, UserInfoOptions } from '../../types'
@@ -82,40 +83,43 @@ export default class DefaultPeer extends Peer<DefaultPeerEvents> {
     }
   }
 
+  /** The messages of a peer connection have an uint32 code, unlike the init ones */
+  protected override logSent (msg: Message, detail?: string): void {
+    const name = nameOf(PEER_MESSAGES, msg.data.readUInt32LE(0))
+    debug(`${this.user} send ${name}, ${msg.data.length} bytes${detail ? `: ${detail}` : ''}`)
+  }
+
   /** UserInfoRequest (15): asks the peer what it tells about itself */
   userInfoRequest (): void {
-    debug(`User info request to ${this.user}`)
     this.send(messages.userInfoRequest())
   }
 
   /** TransferRequest (40) direction 0: legacy way of asking for a download */
   transferRequest (file: string, token: string): void {
-    debug(`Transfer request ${file}`)
-    this.send(messages.transferRequest(file, token))
+    this.send(messages.transferRequest(file, token), `${file} token ${token}`)
   }
 
   /** TransferResponse (41): answers a transfer a peer announced */
   transferResponse (token: string, allowed = true, reason?: string): void {
-    debug(`Transfer response ${token} allowed ${String(allowed)}`)
-    this.send(messages.transferResponse(token, allowed, reason))
+    this.send(
+      messages.transferResponse(token, allowed, reason),
+      `token ${token} allowed ${String(allowed)}${reason ? ` (${reason})` : ''}`
+    )
   }
 
   /** QueueUpload (43): asks the peer to queue a file for upload to us */
   queueUpload (file: string): void {
-    debug(`Queue upload ${file}`)
-    this.send(messages.queueUpload(file))
+    this.send(messages.queueUpload(file), file)
   }
 
   /** PlaceInQueueRequest (51): asks our position in the upload queue of the peer */
   placeInQueueRequest (file: string): void {
-    debug(`Place in queue request ${file}`)
-    this.send(messages.placeInQueueRequest(file))
+    this.send(messages.placeInQueueRequest(file), file)
   }
 
   /** UploadDenied (50): tells the peer it will not get the file */
   uploadDenied (file: string, reason: string): void {
-    debug(`Upload denied ${file}: ${reason}`)
-    this.send(messages.uploadDenied(file, reason))
+    this.send(messages.uploadDenied(file, reason), `${file}: ${reason}`)
   }
 
   /** FileSearchResponse (9): our matches for a search the peer asked the network */
@@ -125,7 +129,9 @@ export default class DefaultPeer extends Peer<DefaultPeerEvents> {
     user: string,
     options?: FileSearchResultOptions
   ): void {
-    debug(`send FileSearchResult to user ${this.user} with token ${token}`)
-    this.send(messages.fileSearchResult(files, token, user, options))
+    this.send(
+      messages.fileSearchResult(files, token, user, options),
+      `${files.length} files, ticket ${token}`
+    )
   }
 }
