@@ -225,7 +225,7 @@ describe('class DefaultPeer', () => {
     assert.strictEqual(payload.str(), 'music')
     assert.strictEqual(payload.int32(), 1) // one file
     assert.strictEqual(payload.int8(), 1) // file code
-    assert.strictEqual(payload.str(), 'music\\great song.mp3')
+    assert.strictEqual(payload.str(), 'great song.mp3') // base name, the folder is on the line above
     assert.strictEqual(payload.int64(), 4)
   })
 
@@ -248,7 +248,7 @@ describe('class DefaultPeer', () => {
     assert.strictEqual(payload.str(), 'music')
     assert.strictEqual(payload.int32(), 1) // one file
     payload.int8()
-    assert.strictEqual(payload.str(), 'music\\great song.mp3')
+    assert.strictEqual(payload.str(), 'great song.mp3') // base name, the folder is on the line above
   })
 
   it('reports a search result with its attributes', async () => {

@@ -91,12 +91,12 @@ describe('peer messages', () => {
     assert.strictEqual(payload.str(), 'music')
     assert.strictEqual(payload.int32(), 2) // two files
     assert.strictEqual(payload.int8(), 1) // file code, 1 as documented
-    assert.strictEqual(payload.str(), 'music\\great song.mp3')
+    assert.strictEqual(payload.str(), 'great song.mp3') // base name, the folder is on the line above
     assert.strictEqual(payload.int64(), 1234)
     assert.strictEqual(payload.str(), 'mp3')
     assert.strictEqual(payload.int32(), 0) // no attribute
     payload.int8()
-    assert.strictEqual(payload.str(), 'music\\other song.mp3')
+    assert.strictEqual(payload.str(), 'other song.mp3')
     assert.strictEqual(payload.int64(), 5678)
     assert.strictEqual(payload.str(), 'mp3')
     assert.strictEqual(payload.int32(), 0)
@@ -104,7 +104,7 @@ describe('peer messages', () => {
     assert.strictEqual(payload.str(), 'music\\live')
     assert.strictEqual(payload.int32(), 1)
     payload.int8()
-    assert.strictEqual(payload.str(), 'music\\live\\encore.flac')
+    assert.strictEqual(payload.str(), 'encore.flac')
     assert.strictEqual(payload.int64(), 9)
     assert.strictEqual(payload.str(), 'flac')
     assert.strictEqual(payload.int32(), 0)
@@ -131,7 +131,7 @@ describe('peer messages', () => {
     assert.strictEqual(payload.str(), 'music')
     assert.strictEqual(payload.int32(), 1) // one file
     assert.strictEqual(payload.int8(), 1)
-    assert.strictEqual(payload.str(), 'music\\great song.mp3')
+    assert.strictEqual(payload.str(), 'great song.mp3') // base name, the folder is on the line above
     assert.strictEqual(payload.int64(), 1234)
   })
 
