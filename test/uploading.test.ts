@@ -242,6 +242,33 @@ describe('uploading', () => {
     }
   }).timeout(10000)
 
+  it('asks the server to relay only after failing to reach the peer itself', async () => {
+    // an address that answers nothing: the direct attempt must fail before the relay is used
+    peerPort = 4999
+    const client = await clientFor()
+    const peer = await peerFor()
+
+    try {
+      await client.sharesReady
+
+      const relayed = new Promise<{ token: string, type: string }>(resolve =>
+        mockServer.once('connect-to-peer', resolve))
+      const received = new Promise<{ data: Buffer }>(resolve => peer.once('file', resolve))
+
+      peer.queueUpload(file)
+
+      const request = await relayed
+      assert.strictEqual(request.type, 'F')
+      peer.pierce(request.token)
+
+      assert.deepStrictEqual((await received).data, data,
+        'the file must go out on the relayed connection')
+    } finally {
+      client.destroy()
+      peer.destroy()
+    }
+  }).timeout(10000)
+
   it('sends the file on the connection a firewalled peer opens to us', async () => {
     // the server answers port 0, so the client cannot reach the peer and asks it to connect
     peerPort = 0

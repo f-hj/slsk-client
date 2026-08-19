@@ -16,12 +16,15 @@ You must already have a Soulseek account before using this module.
 - File download
 - Sharing: peers can search and browse what you share, from the local file system or from
   anything else through a [share provider](#sharing)
+- Uploads: the shared files are sent to the peers that ask for them, with slots and a queue.
+  Off by default, see the [`uploads` option](#serving-the-files)
 
 ### Not implemented
 
 This stuff is not implemented (yet?), but I wait your __PR__!
 - Chat
-- Uploads: peers find your files but asking for one is still denied (+ Upnp opened port)
+- Opening the incoming port by UPnP: it has to be reachable for a firewalled peer to be served
+- Upload priority for privileged users, per-peer rate limits and a ban list
 
 ## ⚠ Infos
 You must choose file with slots: true, or you'll wait a long time before downloading it.
@@ -77,7 +80,7 @@ const client = new SlskClient({ shares: fsShareProvider({ folders: ['/home/me/mu
 |uploads|`true`, or `{ slots?, queueLimit? }`, to send the shared files to the peers that ask for them|false|off by default: a client shares a file list and refuses every transfer until you turn it on|
 |timeout|Time in ms before the login attempt fails|2000|
 |downloadRetries|How many times a transfer that stopped early is asked for again|3|`0` to fail an interrupted download right away|
-|transferTimeout|Time in ms of silence on a file connection before the transfer is asked for again|60000|A file connection carries the transfer or nothing, so an idle one is dead|
+|transferTimeout|Time in ms of silence on a file connection before it is dropped|600000|A file connection carries the transfer or nothing, so an idle one is dead: a download is then asked for again, an upload loses its slot|
 |userInfo|What is answered to a peer asking for our info: `description`, `picture`, `uploadSlots`, `queueSize`, `slotsFree`, `uploadPermitted`|no description, and the slots, queue and permission of the `uploads` option as they stand|Only the keys you set are overridden, so a peer is told the truth about the slots unless you say otherwise|
 |reconnect|`false`, or `{ retries?, delay?, maxDelay? }`, to log in again when the server connection drops|`{ retries: Infinity, delay: 1000, maxDelay: 60000 }`|the delay doubles after every failed attempt, up to `maxDelay`|
 |downloadTimeout|ms without any progress after which a download fails|none|a queued file can legitimately wait for hours, so there is no timeout unless you set one|
@@ -504,8 +507,11 @@ What happens when a peer asks for a file:
   where to start, so a peer resuming a partial file only gets the rest
 - the bytes go out at the pace the peer reads them, and a peer that stops reading for
   `transferTimeout` ms loses the slot
-- a peer that cannot accept a connection is asked, through the server, to open the file connection
-  itself, so a client behind a router serves firewalled peers as well
+- the file connection is opened to the peer, at the address the server reports for it: the peer
+  connection it asked on only carries an ephemeral port, never the port it listens on
+- a peer that cannot be reached that way is asked, through the server, to open the file connection
+  itself. That fallback needs your own listening port to be reachable, since the server hands the
+  peer the address it has for you
 
 `client.uploads` lists what is running and waiting, and `slotsFree`, `queueSize` and
 `uploadSlots` sent to peers (in a user info answer and next to every search result) are computed

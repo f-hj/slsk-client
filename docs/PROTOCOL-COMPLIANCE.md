@@ -158,7 +158,7 @@ Deviations and deliberate choices:
 
 - a legacy TransferRequest(dir 0) is **not** answered `allowed=1`, as the docs recommend: it is queued and refused with 'Queued', then announced with our own dir-1 request, so nothing but a transfer we announced can open a file connection
 - refusal reasons are the documented ones (`File not shared.`, `File read error.`, `Too many files`), none of which a client rewrites to 'Cancelled'
-- a peer whose address we do not have is asked, with ConnectToPeer(type F), to open the file connection itself, so firewalled downloaders are served
+- the file connection is opened towards the peer, at the address of the peer connection or the one GetPeerAddress(3) reports (a peer connection only ever carries the ephemeral port of the peer). Only when that fails, or when the server reports port 0, is ConnectToPeer(type F) used to have the peer open it instead — which needs our own listening port to be reachable, since the server hands the peer the address it has for us
 - a downloader that stops reading for `transferTimeout` ms loses the connection and the slot, and UploadFailed(46) is sent when a transfer we had announced cannot happen
 - privileged users get no priority in the queue, and there is no per-peer rate limit or ban list
 

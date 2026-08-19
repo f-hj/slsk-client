@@ -703,31 +703,82 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     peer.uploadRequest(upload.file, token, size)
   }
 
-  /** The peer accepted a transfer we announced: open the file connection and send the bytes */
-  private startUpload (peer: DefaultPeer, upload: Upload): void {
-    const token = upload.token as string
+  /**
+   * The peer accepted a transfer we announced: opens the file connection towards it, and only
+   * asks the server to relay one when the peer cannot be reached. A peer connection carries the
+   * ephemeral port of the peer, never the one it listens on, so the address comes from the server.
+   */
+  private async startUpload (peer: DefaultPeer, upload: Upload): Promise<void> {
+    const address = await this.addressOf(upload.user, peer)
 
-    if (peer.peer.host && peer.peer.port) {
-      UploadPeer.open({
-        host: peer.peer.host,
-        port: peer.peer.port,
+    if (address) {
+      const connection = UploadPeer.open({
+        host: address.host,
+        port: address.port,
         session: this.session,
         upload,
         transferTimeout: this.transferTimeout
       })
-      return
+
+      try {
+        await connection.ready
+        return
+      } catch (err) {
+        debug(`cannot open a file connection to ${upload.user}: ${String(err)}`)
+        connection.destroy()
+      }
     }
 
-    /*
-     * No address for the peer: ask the server to make it connect to us instead, on a connection
-     * of type F, and send the bytes on the one it pierces our firewall with.
-     */
-    debug(`no address for ${upload.user}, asking the server to relay a file connection`)
+    if (upload.isSettled) return
+    this.relayFileConnection(upload)
+  }
+
+  /**
+   * Address a file connection can be opened to: the one the peer connection already knows, or the
+   * one the server has for that user. `undefined` for a peer the server reports as unreachable,
+   * which is what port 0 means.
+   */
+  private async addressOf (
+    user: string,
+    peer: DefaultPeer
+  ): Promise<{ host: string, port: number } | undefined> {
+    if (peer.peer.host && peer.peer.port) {
+      return { host: peer.peer.host, port: peer.peer.port }
+    }
+
+    try {
+      const answer = waitFor(this.server, 'get-peer-address', {
+        timeout: PEER_TIMEOUT,
+        timeoutError: new Error(`GetPeerAddress timed out for ${user}`),
+        match: address => address.user === user
+      })
+      this.server.getPeerAddress(user)
+
+      const [address] = await answer
+      if (!address.port || !address.host) return undefined
+      return { host: address.host, port: address.port }
+    } catch (err) {
+      debug(`no address for ${user}: ${String(err)}`)
+      return undefined
+    }
+  }
+
+  /**
+   * Asks the server to make the peer open the file connection, for a peer we cannot reach, and
+   * sends the file on the connection it pierces our firewall with. Needs our own listening port
+   * to be reachable, since the server hands the peer the address it has for us.
+   */
+  private relayFileConnection (upload: Upload): void {
+    const token = upload.token as string
+    debug(`asking the server to have ${upload.user} open the file connection`)
 
     const gaveUp = setTimeout(() => {
       if (!this.pendingIndirect[token]) return
       delete this.pendingIndirect[token]
-      upload.fail(new Error(`${upload.user} never opened the file connection`))
+      upload.fail(new Error(
+        `${upload.user} never opened the file connection, and it could not be reached directly` +
+        ` either: our listening port ${this.incomingPort} may not be reachable`
+      ))
     }, PEER_TIMEOUT)
     gaveUp.unref()
 
@@ -866,6 +917,7 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
 
     debug(`${peer.user} accepted ${upload.file}, opening the file connection`)
     this.startUpload(peer, upload)
+      .catch((err: Error) => upload.fail(err))
   }
 
   /** Files a peer sent back for one of our searches */

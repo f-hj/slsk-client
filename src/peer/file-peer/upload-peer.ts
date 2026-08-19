@@ -44,6 +44,8 @@ export default class UploadPeer extends Peer {
   private pending = Buffer.alloc(0)
   private offsetRead = false
   private stream?: Readable
+  /** true once the connection came up: a socket that never did is not a failed transfer yet */
+  private established = false
 
   constructor (socket: net.Socket, peer: PeerInfo, options: UploadPeerOptions) {
     super(socket, peer, options)
@@ -52,12 +54,14 @@ export default class UploadPeer extends Peer {
     if (options.handshake === 'init') {
       this.conn.once('connect', () => {
         debug(`${this.label} file connection up`)
+        this.established = true
         // PeerInit carries no transfer token, the FileTransferInit frame right after does
         this.sendPeerInit('F', '00000000')
         this.announceTransfer()
       })
     } else {
       // the peer pierced our firewall, the socket is already up
+      this.established = true
       this.announceTransfer()
     }
 
@@ -78,6 +82,13 @@ export default class UploadPeer extends Peer {
       this.stream?.destroy()
       if (this.upload.isSettled) return
 
+      if (!this.established) {
+        // a connection that never came up leaves the transfer alone: whoever opened it still has
+        // the server-relayed route to try
+        debug(`${this.user} could not be reached on this connection`)
+        return
+      }
+
       // the downloader closes the connection as soon as it holds everything it asked for
       if (this.upload.isComplete) {
         this.upload.complete()
@@ -89,12 +100,16 @@ export default class UploadPeer extends Peer {
     })
   }
 
-  /** Opens a file connection to the peer that is waiting for the file */
+  /**
+   * Opens a file connection to the peer that is waiting for the file. Await `ready` to know
+   * whether it came up: a peer that cannot be reached is the caller's business, it still has the
+   * server-relayed route to try.
+   */
   static open (options: OpenUploadPeerOptions): UploadPeer {
     debug(`open file connection to ${options.upload.user}`)
     const conn = net.createConnection({ host: options.host, port: options.port })
 
-    const peer = new UploadPeer(conn, {
+    return new UploadPeer(conn, {
       user: options.upload.user,
       type: 'F',
       host: options.host,
@@ -105,13 +120,6 @@ export default class UploadPeer extends Peer {
       handshake: 'init',
       transferTimeout: options.transferTimeout
     })
-
-    peer.ready.catch(() => {
-      debug(`file socket never came up ${options.upload.user}`)
-      peer.upload.fail(new Error(`Cannot connect to ${options.upload.user}`))
-    })
-
-    return peer
   }
 
   /** FileTransferInit: the token of the transfer, which is what the downloader matches it by */
