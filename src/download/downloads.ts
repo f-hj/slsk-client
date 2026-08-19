@@ -50,6 +50,16 @@ export default class Downloads {
     this.byToken.delete(token)
   }
 
+  /**
+   * Drops every token bound to a download, before asking for it again: the peer picks a new
+   * token for the new attempt and the old one must not resolve anything.
+   */
+  forgetTokensOf (download: Download): void {
+    this.byToken.forEach((bound, token) => {
+      if (bound === download) this.byToken.delete(token)
+    })
+  }
+
   /** Every download still running */
   get pending (): Download[] {
     return [...this.byUser.values()].flatMap(files => [...files.values()])
@@ -62,9 +72,7 @@ export default class Downloads {
       if (files.size === 0) this.byUser.delete(download.user)
     }
 
-    this.byToken.forEach((bound, token) => {
-      if (bound === download) this.byToken.delete(token)
-    })
+    this.forgetTokensOf(download)
   }
 
   /** Fails everything still running, used when the client is destroyed */

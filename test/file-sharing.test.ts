@@ -31,13 +31,6 @@ describe('file-sharing', () => {
       .on('get-peer-address', getPeerAddress => mockServer.returnPeerAddress(getPeerAddress.client, 'user', defaultPeerAddress.host, defaultPeerAddress.port))
 
     mockDistributedPeer = new MockDistributedPeer(distributedPeerAddress)
-    mockDistributedPeer.on('peer-init', (peerInfo: PeerInitEvent) => {
-      const ticket = crypto.randomBytes(4).toString('hex')
-      mockDistributedPeer.searchRequest(peerInfo.client, 'user', ticket, 'song')
-      // the second search request is to verify handling of the same request received eventually from another 'parent' (real case)
-      mockDistributedPeer.searchRequest(peerInfo.client, 'user', ticket, 'song')
-    })
-
     mockDefaultPeer = new MockDefaultPeer(defaultPeerAddress)
   })
 
@@ -51,6 +44,9 @@ describe('file-sharing', () => {
   it('must send file search result to client who searched', async () => {
     const fileSearchResult = new Promise<FileSearchResult>(resolve => {
       mockDefaultPeer.once('file-search-result', resolve)
+    })
+    const parentConnected = new Promise<PeerInitEvent>(resolve => {
+      mockDistributedPeer.once('peer-init', resolve)
     })
 
     client = await connectClient({
@@ -66,6 +62,15 @@ describe('file-sharing', () => {
         ])
       ]
     })
+
+    // searching before the listing is over would find nothing: login no longer waits for it
+    const parent = await parentConnected
+    await client.sharesReady
+
+    const ticket = crypto.randomBytes(4).toString('hex')
+    mockDistributedPeer.searchRequest(parent.client, 'user', ticket, 'song')
+    // the same request reaching us from another parent must be answered once (real case)
+    mockDistributedPeer.searchRequest(parent.client, 'user', ticket, 'song')
 
     const result = await fileSearchResult
     const file = result.files[0]

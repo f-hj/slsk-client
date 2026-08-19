@@ -29,6 +29,11 @@ export interface MockUploadPeerOptions {
   answer?: 'queued' | 'allow'
   /** When set, a download request is refused with this reason */
   deny?: string
+  /**
+   * Bytes sent before the file connection is dropped, to play a transfer that dies mid file.
+   * Applies to the first attempt only, the next one sends everything asked for.
+   */
+  cutAfter?: number
 }
 
 export interface MockUploadPeerEvents {
@@ -49,6 +54,8 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
   private readonly server: net.Server
   private readonly options: MockUploadPeerOptions
   private readonly sockets: net.Socket[] = []
+  /** true once the first transfer has been cut short, so the next one goes through */
+  private cut = false
 
   constructor (options: MockUploadPeerOptions) {
     super()
@@ -237,7 +244,16 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
       const offset = Number(buf.readBigUInt64LE(0))
       debug(`recv offset ${offset}`)
       this.emit('offset', offset)
-      conn.write(this.options.data.subarray(offset))
+
+      const remaining = this.options.data.subarray(offset)
+      if (this.options.cutAfter !== undefined && !this.cut) {
+        // send a slice and hang up, like a peer that goes away mid transfer
+        this.cut = true
+        debug(`sending only ${this.options.cutAfter} bytes then dropping the connection`)
+        conn.write(remaining.subarray(0, this.options.cutAfter), () => conn.destroy())
+        return
+      }
+      conn.write(remaining)
     }
     conn.on('data', onData)
   }

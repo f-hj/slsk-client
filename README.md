@@ -75,6 +75,8 @@ const client = new SlskClient({ shares: fsShareProvider({ folders: ['/home/me/mu
 |incomingPort|Port used for incoming connection|2234|
 |shares|One or more [share providers](#sharing): folders of the local file system, files in memory, or anything else|[]|
 |timeout|Time in ms before the login attempt fails|2000|
+|downloadRetries|How many times a transfer that stopped early is asked for again|3|`0` to fail an interrupted download right away|
+|transferTimeout|Time in ms of silence on a file connection before the transfer is asked for again|60000|A file connection carries the transfer or nothing, so an idle one is dead|
 |userInfo|What is answered to a peer asking for our info: `description`, `picture`, `uploadSlots`, `queueSize`, `slotsFree`, `uploadPermitted`|`{ description: '', uploadSlots: 1, queueSize: 0, slotsFree: true, uploadPermitted: UploadPermission.Everyone }`|Only the keys you set are overridden|
 |reconnect|`false`, or `{ retries?, delay?, maxDelay? }`, to log in again when the server connection drops|`{ retries: Infinity, delay: 1000, maxDelay: 60000 }`|the delay doubles after every failed attempt, up to `maxDelay`|
 |downloadTimeout|ms without any progress after which a download fails|none|a queued file can legitimately wait for hours, so there is no timeout unless you set one|
@@ -82,14 +84,19 @@ const client = new SlskClient({ shares: fsShareProvider({ folders: ['/home/me/mu
 
 #### login(user, pass): Promise\<void\>
 
-Connects to the slsk server, lists the shares, starts listening for incoming peer connections
-and logs in: everything the client needs to be usable, so this is the only call to make.
+Connects to the slsk server, starts listening for incoming peer connections and logs in:
+everything the client needs to be usable, so this is the only call to make.
 
 Rejects when the connection fails, the credentials are refused (with a `LoginRefusedError`) or the
 server did not answer the login before `timeout` ms. Destroy the client when it rejects.
 
 Calling it again after the connection dropped logs in on a new one, which is what
 `reconnect: false` leaves to you.
+
+Listing the shares is __not__ waited for: it starts once the login is through and runs in the
+background, because a few thousand files on a slow volume take minutes and the slsk server drops
+a connection that stays unauthenticated that long. Await `sharesReady` when you need to know that
+peers can find your files.
 
 ```ts
 const client = new SlskClient()
@@ -186,6 +193,7 @@ understands is then remembered, so the next download from it goes straight to it
 const download = client.download({ ...res[0], path })
 
 download.on('status', status => console.log(status)) // queued, connected, downloading, complete
+download.on('interrupted', ({ receivedBytes }) => console.log(`dropped at ${receivedBytes}, retrying`))
 download.on('queue', place => console.log(`place ${place} in the queue`))
 download.on('progress', ({ progress }) => console.log(`${Math.round((progress ?? 0) * 100)}%`))
 download.on('failed', err => console.error(err))
@@ -195,7 +203,7 @@ const result = await download // or await download.promise
 
 | member | value |
 |--------|-------|
-|`status`|`requested`, `queued`, `connected`, `downloading`, `complete`, `failed` or `cancelled`|
+|`status`|`requested`, `queued`, `connected`, `downloading`, `interrupted`, `complete`, `failed` or `cancelled`|
 |`promise`|resolves with the result, rejects when the transfer fails. Awaiting the download awaits it|
 |`stream`|data as it is received, read it before the transfer starts (HTTP 206 and the like)|
 |`cancel(reason?)`|gives up on the transfer: the promise rejects with a `DownloadCancelledError`|
@@ -232,6 +240,20 @@ for (const source of sources) {
 
 A download also takes an `AbortSignal`, which is the way to put a deadline on the whole transfer
 rather than on its inactivity: `client.download({ ...file, signal: AbortSignal.timeout(60000) })`.
+
+##### interrupted transfers
+
+A peer that hangs up mid file, or that simply stops sending, does not strand the download:
+
+- the file connection is dropped after `transferTimeout` ms of silence, so a transfer that stalls
+  is noticed instead of hanging forever
+- a transfer that ends short of the size the peer announced is __not__ reported as complete
+- the file is asked for again, up to `downloadRetries` times, and the offset sent to the peer is
+  everything received so far, so the bytes already downloaded are not asked for twice
+- when the attempts run out the download fails with `Transfer interrupted at x/y bytes, …`
+
+The peer connection is re-opened for the retry if it dropped too, so a transfer survives losing
+both connections.
 
 #### downloads
 The downloads currently running.
@@ -278,7 +300,29 @@ Connects to a peer, directly and through the server at the same time, and resolv
 answers first. `download()` calls it when needed, so you rarely have to.
 
 #### shares
-The [share index](#sharing) of the client, to inspect or change what is shared at runtime.
+The [share index](#sharing) of the client, to inspect or change what is shared. Available as soon
+as the client is constructed, so providers can be added before `login()` as well as after:
+
+```ts
+const client = new SlskClient()
+client.shares.addProvider(myProvider) // listed by the login
+await client.login('username', 'password')
+
+client.shares.addProvider(anotherProvider) // added later
+await client.refreshShares()               // lists it and announces the new counts
+```
+
+#### sharesReady: Promise\<void\>
+
+Resolves once the first share listing is over and its counts have been announced to the server,
+rejects when that listing failed. Nobody has to await it, the events say the same thing:
+
+```ts
+client.on('shares-ready', ({ folders, files }) => console.log(`sharing ${files} files`))
+client.on('shares-error', err => console.error('cannot list the shares', err))
+```
+
+Searches reaching us before it resolves find nothing — there is nothing indexed yet.
 
 #### username
 Name this client logs in as, empty until `login()` is called.
@@ -297,11 +341,14 @@ Closes the connection to the server, the incoming-peer listener and every peer c
 |`found:{req}`|`SearchResult`|result of a specific request|
 |`download-progress`|`{ user, file, receivedBytes, totalBytes?, sizeAnnounced, progress? }`|progress of a running download. `sizeAnnounced` is false while `totalBytes` is only the size the search result announced|
 |`download-queue`|`{ user, file, place }`|our place in the upload queue of the peer|
+|`download-interrupted`|`{ user, file, receivedBytes, size?, attempts }`|a transfer stopped early and is being asked for again from there|
 |`server-error`|`Error`|error on the connection to the slsk server|
 |`server-disconnect`|`{ reconnecting }`|the connection to the slsk server is gone. `reconnecting` is false when the client will not log in again, which makes it the moment to `destroy()` it|
 |`server-reconnect`|—|logged in again after a lost connection|
 |`listen-error`|`Error`|error on the incoming peer connections server|
 |`peer-error`|`Error, user`|error on a peer connection|
+|`shares-ready`|`{ folders, files }`|the first share listing is over and announced|
+|`shares-error`|`Error`|the first share listing failed|
 
 ```ts
 client.on('download-progress', ({ file, progress }) => {
@@ -441,6 +488,7 @@ will use.
 |`Shared.search()` returns a promise|a provider may answer searches from a database or a search engine|
 |`slsk.connect()` and `slsk.disconnect()` are gone, and so is the default export|`new SlskClient(options)` + `login(user, pass)` does the same without a module-level client to keep track of|
 |`new SlskClient(options)` takes a single options object, and `client.init()` is gone|`login(user, pass)` does all the connecting, so there is only one call to make|
+|`login()` no longer waits for the shares to be listed, await `sharesReady` for that|the slsk server drops a connection that stays unauthenticated while a large share is walked, so the login used to fail with `timeout login`|
 |The internal `stack` module is gone|state belongs to a client, so several clients can share a process|
 |A lost server connection is reported (`server-disconnect`) and picked up again by default|it used to be invisible: the client looked alive with a dead socket|
 

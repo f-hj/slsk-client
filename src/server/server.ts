@@ -25,6 +25,8 @@ export class LoginRefusedError extends Error {
 
 export interface ServerEvents {
   login: [result: LoginResult]
+  /** Relogged (41): another client logged in with our name, this session is over */
+  relogged: []
   'connect-to-peer': [peer: PeerInfo]
   'get-peer-address': [peer: PeerInfo]
   /** The server could not ask a peer to connect to us */
@@ -122,6 +124,20 @@ export default class Server extends EventEmitter<ServerEvents> {
     this.haveNoParents(true)
     this.setStatus(2)
     if (this.waitPort !== undefined) this.setWaitPort(this.waitPort)
+  }
+
+  /** true between a successful Login and the end of the session */
+  get isLoggedIn (): boolean {
+    return this.loggedIn
+  }
+
+  /**
+   * Another client logged in with our name. The server keeps the newest session and drops this
+   * one, so nothing may be announced on it anymore.
+   */
+  onRelogged (): void {
+    this.loggedIn = false
+    this.emit('relogged')
   }
 
   login (credentials: { user: string, pass: string }): void {

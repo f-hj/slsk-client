@@ -58,6 +58,12 @@ export default function handleServerMessage (msg: Message, server: Server): void
       server.emit('connect-to-peer', { user, type, ip, host, port, token } satisfies PeerInfo)
       break
     }
+    case 41: {
+      // someone logged in with our name: the server keeps the newest session and drops ours
+      debug('another client logged in with our name, this session is over')
+      server.onRelogged()
+      break
+    }
     case 36: {
       const user = msg.str()
       const avgSpeed = msg.int32()

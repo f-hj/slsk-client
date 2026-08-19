@@ -33,6 +33,17 @@ export interface SlskClientOptions {
   /** Time in ms after which the login attempt fails (default: 2000) */
   timeout?: number
   /**
+   * How many times a transfer that stopped before the end is asked for again, from the bytes
+   * already received (default: 3). 0 to fail an interrupted download right away.
+   */
+  downloadRetries?: number
+  /**
+   * Time in ms of silence on a file connection before the transfer is considered dead and
+   * asked for again (default: 60000). A file connection carries the transfer or nothing, so
+   * an idle one is a transfer that will not finish.
+   */
+  transferTimeout?: number
+  /**
    * What is answered to a peer asking for our info with a UserInfoRequest
    * (default: no description, one free slot, nothing queued and uploads open to everyone)
    */

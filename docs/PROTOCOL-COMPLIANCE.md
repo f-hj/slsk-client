@@ -114,9 +114,9 @@ Documented sequence: connect → PeerInit(token 0)/PierceFireWall → downloader
 ## 6. Process-level compliance
 
 ### 6.1 Login — ✅ compliant
-`login()` → TCP connect → Login(1) → on success SharedFoldersFiles(35), HaveNoParent(71), SetStatus(28), SetWaitPort(2) — matches the documented session bootstrap. Deviation: HaveNoParent flag width was fixed to a single byte; share counts come from the index.
+`login()` → TCP connect → Login(1) → on success SharedFoldersFiles(35), HaveNoParent(71), SetStatus(28), SetWaitPort(2) — matches the documented session bootstrap. Anything asked for before the login is queued by [`Server`](../src/server/server.ts) and sent by `onLoggedIn()`, since the server drops what arrives without a session. Nothing else is done between the TCP connect and Login(1): the share listing runs after the login, so the connection never sits unauthenticated while a large share is walked. Deviation: HaveNoParent flag width was fixed to a single byte; share counts come from the index.
 
-The connection is kept under TCP keepalive (the protocol has no ping a client is expected to send: ServerPing is deprecated and answered by nothing), and when it drops the whole bootstrap is replayed on a new connection, credentials included, with a growing delay between the attempts. `reconnect: false` leaves it to the caller, which the `server-disconnect` event tells about it either way.
+The connection is kept under TCP keepalive (the protocol has no ping a client is expected to send: ServerPing is deprecated and answered by nothing), and when it drops the whole bootstrap is replayed on a new connection, credentials included, with a growing delay between the attempts. `reconnect: false` leaves it to the caller, which the `server-disconnect` event tells about it either way. Relogged(41) is not a dropped connection but a dropped session: another client logged in with the same name, so the client reports it as `relogged` and lets a new `login()` through instead of racing it.
 
 ### 6.2 Peer connection establishment — ✅ compliant
 - **Direct outbound** (P/D after GetPeerAddress/NetInfo): compliant, though the D handshake sends *both* PeerInit and PierceFireWall on connect — the docs prescribe one or the other depending on who initiated.

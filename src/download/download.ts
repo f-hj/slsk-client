@@ -17,6 +17,8 @@ export type DownloadStatus =
   | 'connected'
   /** Data is coming in */
   | 'downloading'
+  /** The transfer stopped short of the announced size, it is asked for again from there */
+  | 'interrupted'
   /** Everything has been received and written */
   | 'complete'
   /** The transfer will not happen, see the error */
@@ -30,6 +32,11 @@ export type DownloadEvents = {
   /** Our place in the upload queue of the peer */
   queue: [place: number]
   progress: [progress: DownloadProgress]
+  /**
+   * The transfer stopped before everything announced had arrived, whether the connection was
+   * closed or went silent. What was received is kept and the transfer is asked for again.
+   */
+  interrupted: [evt: { receivedBytes: number, size?: number, attempts: number }]
   /** Raw chunk, as received */
   data: [chunk: Buffer]
   complete: [result: DownloadResult]
@@ -72,6 +79,8 @@ export default class Download extends EventEmitter<DownloadEvents> implements Pr
   readonly offset: number
   /** Size the search result announced, if any: a hint, replaced by what the peer announces */
   readonly expectedSize?: number
+  /** How many times the transfer had to be asked for again after an interruption */
+  attempts = 0
   /** Resolves once the file is received and written, rejects when the transfer fails */
   readonly promise: Promise<DownloadResult>
   /** Size announced by the peer, undefined until it announced the transfer */
@@ -199,6 +208,23 @@ export default class Download extends EventEmitter<DownloadEvents> implements Pr
     const announced = fileSize(size, { allowEmpty: true })
     if (announced !== undefined) this.size = announced
     this.setStatus('connected')
+  }
+
+  /**
+   * The transfer stopped short of what the peer announced. Keeps everything received so the
+   * next attempt can start from `receivedBytes`, and leaves the promise pending: whoever asked
+   * for the file is still waiting for it.
+   */
+  interrupted (): void {
+    if (this.settled) return
+    this.attempts++
+    this.setStatus('interrupted')
+    debug(`${this.user} ${this.file} interrupted at ${this.receivedBytes}/${this.size ?? '?'}`)
+    this.emit('interrupted', {
+      receivedBytes: this.receivedBytes,
+      size: this.size,
+      attempts: this.attempts
+    })
   }
 
   /** Feeds received data, returns true when nothing more is expected */

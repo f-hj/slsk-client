@@ -16,7 +16,7 @@ import Download from './download/download'
 import { DownloadCancelledError, DownloadTimeoutError } from './download/errors'
 import waitFor from './utils/wait-for'
 import type { FileSearchResultFile, FileSearchResult } from './peer/default-peer/messages'
-import type { ShareEntry, ShareProvider } from './share/provider'
+import type { ShareProvider } from './share/provider'
 import type {
   DownloadOptions,
   DownloadProgress,
@@ -55,13 +55,19 @@ const DEFAULT_SERVER: ServerAddress = { host: 'server.slsknet.org', port: 2242 }
 /** Port incoming peer connections are accepted on by default */
 const DEFAULT_INCOMING_PORT = 2234
 /** ms before the login attempt fails */
-const DEFAULT_LOGIN_TIMEOUT = 2000
+const DEFAULT_LOGIN_TIMEOUT = 10000
 /** ms to wait for a peer connection, direct or relayed by the server */
 const PEER_TIMEOUT = 10000
 /** ms before accepting a transfer a peer announced, some peers need a beat */
 const TRANSFER_ACCEPT_DELAY = 200
 /** ms a peer is given to answer a UserInfoRequest */
 const USER_INFO_TIMEOUT = 10000
+/** How many times a transfer that stopped early is asked for again */
+const DOWNLOAD_RETRIES = 3
+/** ms before asking a peer for the rest of an interrupted transfer */
+const RESUME_DELAY = 1000
+/** ms of silence on a file connection before the transfer is considered dead */
+const DEFAULT_TRANSFER_TIMEOUT = 60000
 /** How many distributed search requests are remembered to drop the duplicates */
 const MAX_SEEN_SEARCHES = 5000
 /** ms to wait for any sign that a peer understands the upload queue before asking the old way */
@@ -78,6 +84,14 @@ export type SlskClientEvents = {
   'download-progress': [progress: DownloadProgress]
   /** Position of a download in the upload queue of the peer */
   'download-queue': [place: QueuePlace]
+  /** A transfer stopped early and is being asked for again from where it stopped */
+  'download-interrupted': [evt: {
+    user: string
+    file: string
+    receivedBytes: number
+    size?: number
+    attempts: number
+  }]
   /** Error on the connection to the slsk server */
   'server-error': [err: Error]
   /**
@@ -87,10 +101,19 @@ export type SlskClientEvents = {
   'server-disconnect': [evt: { reconnecting: boolean }]
   /** Logged in again after a lost connection: searches and downloads can be started again */
   'server-reconnect': []
+  /**
+   * Another client logged in with the same name and the server dropped this session. Two
+   * instances sharing one account kick each other off in a loop, so stop one of them.
+   */
+  relogged: []
   /** Error on the server listening for incoming peer connections */
   'listen-error': [err: Error]
   /** Error on a peer connection */
   'peer-error': [err: Error, user: string]
+  /** The first share listing is over and its counts have been announced to the server */
+  'shares-ready': [stats: { folders: number, files: number }]
+  /** The first share listing failed, nothing is shared until a `refreshShares()` succeeds */
+  'shares-error': [err: Error]
 } & {
   /** Emitted for every incoming result of a specific search request */
   [K in `found:${string}`]: [res: SearchResult]
@@ -104,16 +127,24 @@ interface PendingSearch {
 export class SlskClient extends EventEmitter<SlskClientEvents> {
   private server!: Server
   private listen?: Listen
-  private shared!: Shared
-  /** Connection to the server and to the shares, started once by `login()` */
+  private readonly shared: Shared
+  /**
+   * Resolves once the first share listing is over and its counts have been announced, rejects
+   * when that listing failed. `login()` does not wait for it: listing a large share takes
+   * minutes, and the client is usable while it runs.
+   */
+  readonly sharesReady: Promise<void>
+  private resolveSharesReady!: () => void
+  private rejectSharesReady!: (err: Error) => void
+  /** Connection to the server, opened once by `login()` */
   private initialized?: Promise<void>
+  /** Login in flight or done, so a caller retrying does not send a second Login */
+  private loginAttempt?: Promise<void>
   private peers: Record<string, DefaultPeer | DistributedPeer> = {}
   /** State the peers and the file transfers of this client share */
   private readonly session = new Session()
   /** Searches waiting for results, by token */
   private readonly searches = new Map<string, PendingSearch>()
-  /** Matches waiting for the address of the peer that searched, by user then ticket */
-  private readonly pendingSearchMatches = new Map<string, Map<string, ShareEntry[]>>()
   /** Distributed search requests already answered, the same one reaches us from every parent */
   private readonly seenSearches = new Set<string>()
   /** Tokens of the ConnectToPeer requests we sent, by token */
@@ -128,6 +159,18 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
 
   constructor (readonly options: SlskClientOptions = {}) {
     super()
+
+    // built here, not on login: `shares` is documented as usable at any time, and a provider
+    // added before logging in must not be thrown away
+    this.shared = new Shared()
+    this.shareProviders.forEach(provider => this.shared.addProvider(provider))
+
+    this.sharesReady = new Promise<void>((resolve, reject) => {
+      this.resolveSharesReady = resolve
+      this.rejectSharesReady = reject
+    })
+    // nobody has to await it, the events report the same thing
+    this.sharesReady.catch(() => {})
   }
 
   /** Address of the slsk server this client logs into */
@@ -159,6 +202,11 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     }
   }
 
+  /** ms of silence on a file connection before the transfer is asked for again */
+  private get transferTimeout (): number {
+    return this.options.transferTimeout ?? DEFAULT_TRANSFER_TIMEOUT
+  }
+
   /** Share providers given in the options, whether one or several were passed */
   private get shareProviders (): ShareProvider[] {
     const shares = this.options.shares
@@ -182,8 +230,8 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   }
 
   /**
-   * Connects to the slsk server, starts listening for incoming peer connections and lists the
-   * shares. Called by `login()`, once however many times it is called.
+   * Connects to the slsk server and starts listening for incoming peer connections.
+   * Called by `login()`, once however many times it is called.
    */
   private init (): Promise<void> {
     if (!this.initialized) this.initialized = this.initialize()
@@ -193,14 +241,7 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   private async initialize (): Promise<void> {
     debug('Init client')
     await this.connectServer()
-
-    this.shared = new Shared()
-    this.shareProviders.forEach(provider => this.shared.addProvider(provider))
-
     this.startListening()
-
-    await this.shared.refresh()
-    this.announceShares()
   }
 
   /**
@@ -223,6 +264,13 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
       this.connectToPeer(peer)
     })
 
+    // the session is gone, not the connection: a new login is needed, and whatever logs in with
+    // the same name has to stop first or the two keep kicking each other off
+    server.on('relogged', () => {
+      this.loginAttempt = undefined
+      this.emit('relogged')
+    })
+
     server.on('get-peer-address', peer => {
       if (this.peers[peer.user]) {
         this.peers[peer.user].setAddress(peer.host as string, peer.port as number)
@@ -231,7 +279,6 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
           host: peer.host,
           port: peer.port as number
         }), peer)
-        this.flushSearchMatches(peer.user)
       }
     })
 
@@ -243,7 +290,8 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
 
     // a new connection knows nothing about us, both are queued until the login goes through
     if (this.listen) server.setWaitPort(this.incomingPort)
-    if (this.shared) this.announceShares()
+    // nothing yet on the first connection, the first listing announces the real counts
+    this.announceShares()
 
     await server.ready
   }
@@ -252,6 +300,10 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   private onServerClose (server: Server): void {
     // a connection we already replaced, or one the reconnection loop just gave up on
     if (this.server !== server || this.reconnecting || this.destroyed) return
+
+    // the session went with the connection, so a caller asking to log in again is not a caller
+    // retrying a login that already went through
+    this.loginAttempt = undefined
 
     const reconnecting = this.credentials !== undefined && this.reconnectOptions !== false
     debug(`server connection lost${reconnecting ? ', logging in again' : ''}`)
@@ -325,7 +377,8 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     this.listen.on('new-peer', evt => {
       const peer = evt.peer
       if (this.peers[peer.user]) {
-        debug(`Already connected to ${peer.user}`)
+        debug(`already connected to ${peer.user}, dropping the connection it just opened` +
+          `${evt.initialData ? ` and the ${evt.initialData.length} bytes it sent on it` : ''}`)
       } else {
         this.server.getPeerAddress(peer.user)
         debug(`new Peer connected ${peer.user} token ${peer.token}`)
@@ -339,7 +392,8 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
       new FilePeer(evt.socket, { user: evt.user, type: 'F' }, {
         session: this.session,
         readToken: true,
-        initialData: evt.initialData
+        initialData: evt.initialData,
+        transferTimeout: this.transferTimeout
       })
     })
 
@@ -370,7 +424,29 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   private announceShares (): void {
     const stats = this.shared.stats()
     debug(`sharing ${stats.files} files in ${stats.folders} folders`)
+    if (!this.server) {
+      debug('not connected yet, the counts go out with the login')
+      return
+    }
     this.server.sharedFoldersFiles(stats.folders, stats.files)
+  }
+
+  /**
+   * Lists the providers and announces what they hold. Runs in the background of the login: a
+   * few thousand files on a slow volume take minutes, and the slsk server drops a connection
+   * that stays unauthenticated that long.
+   */
+  private async listShares (): Promise<void> {
+    try {
+      await this.shared.refresh()
+      this.announceShares()
+      this.emit('shares-ready', this.shared.stats())
+      this.resolveSharesReady()
+    } catch (err) {
+      debug(`cannot list the shares: ${String(err)}`)
+      this.emit('shares-error', err as Error)
+      this.rejectSharesReady(err as Error)
+    }
   }
 
   private createDefaultPeer (socket: net.Socket, peer: PeerInfo, initialData?: Buffer): DefaultPeer {
@@ -487,14 +563,19 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
       session: this.session,
       handshake: 'init',
       // introducing ourselves is enough, the uploader waits for our offset
-      offsetDelay: 1000
+      offsetDelay: 1000,
+      transferTimeout: this.transferTimeout
     })
   }
 
   /** Files a peer sent back for one of our searches */
   private handleSearchResult (result: FileSearchResult): void {
     const search = this.searches.get(result.currentToken)
-    if (!search) return
+    if (!search) {
+      // a search that already returned, or a token we never asked for
+      debug(`dropping ${result.files.length} results of the unknown search ${result.currentToken}`)
+      return
+    }
 
     result.files.forEach(file => {
       search.onResult(toSearchResult(file, result))
@@ -514,7 +595,8 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
           session: this.session,
           handshake: 'pierce',
           // the uploader announces the transfer with its own token
-          readToken: true
+          readToken: true,
+          transferTimeout: this.transferTimeout
         })
         break
       }
@@ -561,32 +643,23 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
 
     debug(`Search from peer ${user}, query: ${query}. Matched: ${matched.length} files`)
 
-    const peer = this.peerConnection(user)
-    if (peer) {
-      peer.fileSearchResult(matched, ticket, this.session.username)
+    const existing = this.peerConnection(user)
+    if (existing) {
+      existing.fileSearchResult(matched, ticket, this.session.username)
       return
     }
 
-    // the answer waits until the server tells us where the peer is
-    const waiting = this.pendingSearchMatches.get(user) ?? new Map<string, ShareEntry[]>()
-    waiting.set(ticket, matched)
-    this.pendingSearchMatches.set(user, waiting)
-    this.server.getPeerAddress(user)
-  }
-
-  /** Sends the matches that were waiting for the address of this peer */
-  private flushSearchMatches (user: string): void {
-    const waiting = this.pendingSearchMatches.get(user)
-    if (!waiting) return
-    this.pendingSearchMatches.delete(user)
-    const peer = this.peerConnection(user)
-    if (!peer) {
-      debug(`no peer connection to answer the searches of ${user}`)
-      return
+    /*
+     * Most searchers cannot accept a connection: they are behind a router that forwards
+     * nothing. Asking the server for their address and connecting to it only works for the
+     * few that are reachable, so the answer goes through connectToUser, which also asks the
+     * server to make the peer connect to us.
+     */
+    const connection = await this.connectToUser(user)
+    if (!(connection instanceof DefaultPeer)) {
+      throw new Error(`No peer connection to ${user}`)
     }
-    waiting.forEach((matched, ticket) => {
-      peer.fileSearchResult(matched, ticket, this.session.username)
-    })
+    connection.fileSearchResult(matched, ticket, this.session.username)
   }
 
   /**
@@ -612,21 +685,48 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   }
 
   /**
-   * Connects to the slsk server, lists the shares, starts listening for incoming peer
-   * connections and logs in: everything the client needs to be usable.
+   * Connects to the slsk server, starts listening for incoming peer connections and logs in:
+   * everything the client needs to be usable.
    * Rejects when the connection fails, the credentials are refused, or the server did not
    * answer the login after `options.timeout` ms.
+   * Listing the shares is started once the login is through and is *not* waited for, see
+   * {@link sharesReady} to know when peers can find our files.
+   * Calling it again while a session is up does nothing: a second Login on the same connection
+   * makes the server answer Relogged and drop the session.
    */
   async login (user: string, pass: string): Promise<void> {
+    // a caller retrying a login is common, sending Login twice is what gets us relogged
+    if (this.loginAttempt) return await this.loginAttempt
+
+    this.loginAttempt = this.attemptLogin(user, pass)
+    try {
+      await this.loginAttempt
+    } catch (err) {
+      // a failed attempt must not stop the caller from trying again
+      this.loginAttempt = undefined
+      throw err
+    }
+  }
+
+  /** Everything a login needs around the credentials themselves */
+  private async attemptLogin (user: string, pass: string): Promise<void> {
     await this.init()
 
     // logging in again after the connection was lost: that socket will not come back
     if (!this.server.connected && !this.reconnecting) await this.connectServer()
 
+    if (this.server.isLoggedIn) {
+      debug(`already logged in as ${this.session.username}, not sending Login again`)
+      return
+    }
+
     await this.sendLogin(user, pass)
 
     // only a working session is worth reconnecting, credentials the server refused are not
     this.credentials = { user, pass }
+
+    // the shares are listed once the session exists, and on their own time
+    void this.listShares()
   }
 
   /** Sends the credentials and waits for the answer of the server */
@@ -797,6 +897,10 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
 
     download.on('progress', progress => this.emit('download-progress', progress))
     download.on('queue', place => this.emit('download-queue', { user, file, place }))
+    download.on('interrupted', evt => {
+      this.emit('download-interrupted', { user, file, ...evt })
+      this.resumeDownload(download)
+    })
 
     // asking on the next tick, so a caller that cancels right away asks the peer for nothing
     queueMicrotask(() => {
@@ -806,6 +910,37 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     })
 
     return download
+  }
+
+  /**
+   * Asks for the rest of a transfer that stopped early. The file is asked for the same way it
+   * was the first time, and the offset sent to the peer is everything received so far, so
+   * nothing already downloaded is asked for twice.
+   */
+  private resumeDownload (download: Download): void {
+    const attempts = this.options.downloadRetries ?? DOWNLOAD_RETRIES
+    if (download.attempts > attempts) {
+      download.fail(new Error(
+        `Transfer interrupted at ${download.receivedBytes}/${download.size ?? '?'} bytes,` +
+        ` gave up after ${attempts} ${attempts === 1 ? 'retry' : 'retries'}`
+      ))
+      return
+    }
+
+    // the token of the attempt that just died must not resolve anything anymore
+    this.session.downloads.forgetTokensOf(download)
+
+    debug(`resume ${download.user} ${download.file} at ${download.receivedBytes}, ` +
+      `attempt ${download.attempts}/${attempts}`)
+
+    const retry = setTimeout(() => {
+      if (download.isSettled) return
+      // the peer connection is often gone too, requestDownload opens a new one when needed
+      this.requestDownload(download)
+        .catch((err: Error) => download.fail(err))
+    }, RESUME_DELAY)
+    // a transfer waiting to be asked for again must not keep the process alive
+    retry.unref()
   }
 
   /**

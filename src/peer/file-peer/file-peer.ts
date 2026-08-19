@@ -9,6 +9,9 @@ import type { PeerInfo } from '../../types'
 
 const debug = createDebug('slsk:peer:file')
 
+/** ms of silence on a file connection before it is considered dead */
+const DEFAULT_TRANSFER_TIMEOUT = 60000
+
 export interface FilePeerOptions extends PeerOptions {
   /**
    * How we introduce ourselves once the connection is up:
@@ -26,6 +29,12 @@ export interface FilePeerOptions extends PeerOptions {
   initialData?: Buffer
   /** ms to wait before sending the offset, used by the legacy PeerInit flow */
   offsetDelay?: number
+  /**
+   * ms of silence before the connection is dropped. A file connection either carries the
+   * transfer or has nothing to say, so an idle one is a transfer that will not finish
+   * (default: 60000).
+   */
+  transferTimeout?: number
 }
 
 export interface OpenFilePeerOptions {
@@ -38,6 +47,7 @@ export interface OpenFilePeerOptions {
   handshake: 'pierce' | 'init'
   readToken?: boolean
   offsetDelay?: number
+  transferTimeout?: number
 }
 
 /**
@@ -79,6 +89,13 @@ export default class FilePeer extends Peer {
       })
     }
 
+    // a peer that stops sending mid file, or that opens a connection it then forgets about,
+    // would otherwise hold the transfer forever: nothing else times a file connection out
+    this.conn.setTimeout(options.transferTimeout ?? DEFAULT_TRANSFER_TIMEOUT, () => {
+      debug(`${this.user} sent nothing for too long, dropping the file connection`)
+      this.conn.destroy()
+    })
+
     this.resolveDownload()
     this.conn.on('data', onData)
 
@@ -88,11 +105,21 @@ export default class FilePeer extends Peer {
 
     this.conn.on('close', () => {
       debug(`file socket close ${this.user}`)
-      if (!this.resolved) {
-        debug(`ERROR: token ${this.token ?? 'unknown'} not expected`)
+      const download = this.resolved
+      if (!download) {
+        // the uploader never announced a transfer on it: a connection it asked the server to
+        // relay and then did not need, nothing was waiting for it
+        debug(`no transfer was announced on this connection (${this.token ?? 'no token'})`)
         return
       }
-      void this.resolved.end()
+      if (download.isSettled) return
+
+      // a peer that hangs up mid file must not look like a peer that sent everything
+      if (download.size !== undefined && !download.isComplete) {
+        download.interrupted()
+        return
+      }
+      void download.end()
     })
   }
 
@@ -109,7 +136,8 @@ export default class FilePeer extends Peer {
       session: options.session,
       handshake: options.handshake,
       readToken: options.readToken,
-      offsetDelay: options.offsetDelay
+      offsetDelay: options.offsetDelay,
+      transferTimeout: options.transferTimeout
     })
 
     peer.ready.catch(() => {
@@ -141,7 +169,8 @@ export default class FilePeer extends Peer {
       return
     }
     this.offsetSent = true
-    const offset = this.resolveDownload()?.offset ?? 0
+    // everything received so far, so a transfer asked for again carries on where it stopped
+    const offset = this.resolveDownload()?.receivedBytes ?? 0
     debug(`${this.user} send FileOffset ${offset}`)
     this.conn.write(fileMessages.offset(offset))
   }

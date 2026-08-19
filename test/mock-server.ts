@@ -29,10 +29,19 @@ export interface HaveNoParentEvent {
   client: net.Socket
 }
 
+/** The client asks the server to make a peer connect to it, because it cannot reach it */
+export interface ConnectToPeerEvent {
+  client: net.Socket
+  token: string
+  user: string
+  type: string
+}
+
 export interface MockServerEvents {
   login: [login: LoginEvent]
   'get-peer-address': [evt: GetPeerAddressEvent]
   'have-no-parent': [evt: HaveNoParentEvent]
+  'connect-to-peer': [evt: ConnectToPeerEvent]
 }
 
 export default class MockServer extends EventEmitter<MockServerEvents> {
@@ -79,6 +88,14 @@ export default class MockServer extends EventEmitter<MockServerEvents> {
             const user = msg.str()
             debug(`recv getPeerAddress for user ${user}`)
             this.emit('get-peer-address', { client, user } satisfies GetPeerAddressEvent)
+            break
+          }
+          case 18: {
+            const token = msg.rawHexStr(4)
+            const user = msg.str()
+            const type = msg.str()
+            debug(`recv ConnectToPeer ${user} type ${type} token ${token}`)
+            this.emit('connect-to-peer', { client, token, user, type })
             break
           }
           case 71: {
