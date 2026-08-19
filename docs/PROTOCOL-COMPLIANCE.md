@@ -24,10 +24,10 @@ Implemented in [`src/server/`](../src/server/) (receive + send helpers) and [`sr
 | 1 | Login (recv) | bool success + greet/uint32 own IP/hash/bool supporter, or reason | Reads success + greet (success) or reason (failure); ignores trailing IP/hash/supporter | ✅ (trailing fields ignored is safe) |
 | 2 | SetWaitPort | uint32 port [+ obfuscation type/port] | Sends port only | ✅ (no obfuscation support) |
 | 3 | GetPeerAddress (send) | string username | As documented | ✅ |
-| 3 | GetPeerAddress (recv) | user, uint32 ip, uint32 port, uint32 obfusc. type, uint16 obfusc. port | Reads user, ip (byte-reversed correctly), port; ignores obfuscation fields | ✅ |
+| 3 | GetPeerAddress (recv) | user, uint32 ip, uint32 port, uint32 obfusc. type, uint16 obfusc. port | Reads user, ip (byte-reversed correctly), port; ignores obfuscation fields. Recorded on the peer connection of that user, for the file connections it may need later, and never dialled on its own: only `connectToUser()` opens a connection, with the address it asked for | ✅ |
 | 5 | WatchUser | string username | Encoder exists (`addUser`) but is **never sent**; response (code 5) not handled | 🟡 dead code |
 | 7 | GetUserStatus (recv) | user, uint32 status, bool privileged | Reads user + status, `privileged` not read | 🟠 |
-| 18 | ConnectToPeer (recv) | user, type, ip, port, uint32 token, bool privileged, obfuscation fields | Reads through token, ignores the rest; dispatches by type P/F/D. A type P request for a peer we are already connected to only records the address it carries: the peer raced a direct connection against this one, and replacing a connection that works with a dial that may never come up loses everything written until it fails | ✅ |
+| 18 | ConnectToPeer (recv) | user, type, ip, port, uint32 token, bool privileged, obfuscation fields | Reads through token, ignores the rest; dispatches by type P/F/D. Connections are tracked per user **and** type, as nicotine keys them: a relayed request is ignored when one of that type is already up (peers race both routes, and dialling back a peer that needed a relay usually gets refused), while a request of another type is honoured — the same user can be a distributed parent and a peer we exchange files with | ✅ |
 | 18 | ConnectToPeer (send) | uint32 token, user, type | Sent by `connectToUser()`, which races a direct connection against a server-relayed one | ✅ |
 | 26 | FileSearch (send) | uint32 token, string query | Sends 4 raw token bytes + query; token is an opaque, self-consistent 4-byte value | ✅ |
 | 26 | FileSearch (recv) | user, token, query | Not handled — search requests are only served via the distributed parent (code D/3) | 🟡 |
@@ -54,7 +54,7 @@ Implemented in [`src/server/messages.ts`](../src/server/messages.ts), [`src/list
 | Code | Name | Doc layout | Implementation | Status |
 |------|------|-----------|----------------|--------|
 | 0 | PierceFireWall | uint32 token | Sent on outbound connections. Inbound: the token is matched against the pending indirect connections of `connectToUser()`, unexpected tokens are dropped | ✅ |
-| 1 | PeerInit | own user, type, uint32 token (**always 0** in modern docs) | Sent with our own name (P connections use token 0, F and D carry the transfer/connection token, a legacy convention). Inbound: parsed correctly and used to register the peer | 🟡 legacy token semantics |
+| 1 | PeerInit | own user, type, uint32 token (**always 0** in modern docs) | Sent with our own name (P connections use token 0, F and D carry the transfer/connection token, a legacy convention). Inbound: parsed correctly and used to register the peer. Only P and F are served: a D init is closed rather than read with a peer parser, since distributed children are not implemented, and an init claiming our own name is closed as well | 🟡 legacy token semantics |
 
 ## 3. Peer messages (type P, code field: `uint32`)
 

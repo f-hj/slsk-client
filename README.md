@@ -299,9 +299,15 @@ const client = new SlskClient({
 })
 ```
 
-#### connectToUser(user, timeout?): Promise\<Peer\>
+#### connectToUser(user, timeout?): Promise\<DefaultPeer\>
 Connects to a peer, directly and through the server at the same time, and resolves with whichever
-answers first. `download()` calls it when needed, so you rarely have to.
+answers first, or with the connection already open to that user. `download()` calls it when needed,
+so you rarely have to.
+
+Connections are tracked per user *and* type, the way the protocol keys them: the peer connection
+(`P`) that carries searches, browsing and transfer requests, and the distributed one (`D`) of a
+parent that sends us the searches of the network. The same user can hold both, and one never
+replaces the other.
 
 #### shares
 The [share index](#sharing) of the client, to inspect or change what is shared. Available as soon

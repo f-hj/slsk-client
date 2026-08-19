@@ -188,6 +188,34 @@ export default class MockServer extends EventEmitter<MockServerEvents> {
     )
   }
 
+  /**
+   * ConnectToPeer (18): relays the request of a peer that asked the server to make the client
+   * connect to it, because it could not reach the client itself.
+   */
+  relayConnectToPeer (
+    client: net.Socket,
+    user: string,
+    host: string,
+    port: number,
+    token: string,
+    type = 'P'
+  ): void {
+    const ip = host.split('.')
+    client.write(
+      new Message()
+        .int32(18)
+        .str(user)
+        .str(type)
+        .int8(parseInt(ip[3]))
+        .int8(parseInt(ip[2]))
+        .int8(parseInt(ip[1]))
+        .int8(parseInt(ip[0]))
+        .int32(port)
+        .rawHexStr(token)
+        .getBuff()
+    )
+  }
+
   /** Drops a client connection, as the real server does when it restarts or the link breaks */
   disconnect (client: net.Socket): void {
     client.destroy()
