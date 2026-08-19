@@ -6,6 +6,7 @@ import Server, { LoginRefusedError } from './server/server'
 import DefaultPeer from './peer/default-peer/default-peer'
 import DistributedPeer from './peer/distributed-peer/distributed-peer'
 import FilePeer from './peer/file-peer/file-peer'
+import UploadPeer from './peer/file-peer/upload-peer'
 import Listen from './listen'
 import Shared from './share/shared'
 import ShareIndex from './share/share-index'
@@ -13,9 +14,16 @@ import fsShareProvider from './share/providers/fs'
 import memoryShareProvider from './share/providers/memory'
 import Session from './session'
 import Download from './download/download'
+import Upload from './upload/upload'
 import { DownloadCancelledError, DownloadTimeoutError } from './download/errors'
+import { UPLOADS_DISABLED } from './peer/default-peer/handler'
 import waitFor from './utils/wait-for'
-import type { FileSearchResultFile, FileSearchResult } from './peer/default-peer/messages'
+import { UploadPermission } from './types'
+import type {
+  FileSearchResultFile,
+  FileSearchResult,
+  FileSearchResultOptions
+} from './peer/default-peer/messages'
 import type { ShareProvider } from './share/provider'
 import type {
   DownloadOptions,
@@ -27,6 +35,8 @@ import type {
   SearchResult,
   ServerAddress,
   SlskClientOptions,
+  UploadOptions,
+  UploadProgress,
   UserInfo
 } from './types'
 
@@ -36,11 +46,13 @@ export type { FsLike, FsLikeFileHandle, FsLikeStats, FsShareProviderOptions } fr
 export type { MemoryShareFile } from './share/providers/memory'
 export type { IndexedEntry } from './share/share-index'
 export type { DownloadEvents, DownloadInit, DownloadStatus } from './download/download'
+export type { UploadEvents, UploadInit, UploadStatus } from './upload/upload'
 export type { LoginResult } from './server/server'
 export {
   Shared,
   ShareIndex,
   Download,
+  Upload,
   DownloadCancelledError,
   DownloadTimeoutError,
   LoginRefusedError,
@@ -67,7 +79,11 @@ const DOWNLOAD_RETRIES = 3
 /** ms before asking a peer for the rest of an interrupted transfer */
 const RESUME_DELAY = 1000
 /** ms of silence on a file connection before the transfer is considered dead */
-const DEFAULT_TRANSFER_TIMEOUT = 60000
+const DEFAULT_TRANSFER_TIMEOUT = 10 * 60 * 1000
+/** How many files are sent at the same time when nothing else is asked for */
+const DEFAULT_UPLOAD_SLOTS = 1
+/** How many files one peer may keep waiting in our queue */
+const DEFAULT_QUEUE_LIMIT = 100
 /** How many distributed search requests are remembered to drop the duplicates */
 const MAX_SEEN_SEARCHES = 5000
 /** ms to wait for any sign that a peer understands the upload queue before asking the old way */
@@ -92,6 +108,14 @@ export type SlskClientEvents = {
     size?: number
     attempts: number
   }]
+  /** A peer asked for one of our files and it went into the upload queue */
+  'upload-queued': [evt: { user: string, file: string, place: number }]
+  /** Progress of a file being sent to a peer */
+  'upload-progress': [progress: UploadProgress]
+  /** A file has been sent whole */
+  'upload-complete': [evt: { user: string, file: string, sentBytes: number }]
+  /** A file could not be sent, the peer has been told */
+  'upload-failed': [evt: { user: string, file: string, error: Error }]
   /** Error on the connection to the slsk server */
   'server-error': [err: Error]
   /**
@@ -205,6 +229,28 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   /** ms of silence on a file connection before the transfer is asked for again */
   private get transferTimeout (): number {
     return this.options.transferTimeout ?? DEFAULT_TRANSFER_TIMEOUT
+  }
+
+  /** How the shared files are served, false when this client shares without uploading */
+  private get uploadOptions (): Required<UploadOptions> | false {
+    const option = this.options.uploads ?? false
+    if (option === false) return false
+
+    const config = option === true ? {} : option
+    const slots = config.slots ?? DEFAULT_UPLOAD_SLOTS
+    if (slots < 1) return false
+
+    return { slots, queueLimit: config.queueLimit ?? DEFAULT_QUEUE_LIMIT }
+  }
+
+  /** true when the shared files are sent to the peers asking for them */
+  get servesUploads (): boolean {
+    return this.uploadOptions !== false
+  }
+
+  /** Files being sent to peers, queued ones included */
+  get uploads (): Upload[] {
+    return this.session.uploads.pending
   }
 
   /** Share providers given in the options, whether one or several were passed */
@@ -479,7 +525,9 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
       session: this.session,
       shared: this.shared,
       initialData,
-      userInfo: this.options.userInfo
+      // read every time a peer asks: the slots and the queue change while we run
+      userInfo: () => ({ ...this.uploadCapacity(), ...this.options.userInfo }),
+      uploads: this.servesUploads
     })
 
     defaultPeer.on('socket-error', err => this.emit('peer-error', err, peer.user))
@@ -504,7 +552,195 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
       this.failDownload(peer.user, evt.file, new Error(evt.reason || 'Upload denied'))
     })
 
+    // a peer asking for one of our files, only reported when this client serves them
+    defaultPeer.on('queue-upload', file => {
+      this.queueUpload(defaultPeer, file)
+        .catch((err: Error) => debug(`cannot queue ${file} for ${peer.user}: ${err.message}`))
+    })
+    defaultPeer.on('place-in-queue-request', file => {
+      const upload = this.session.uploads.get(peer.user, file)
+      if (!upload) {
+        debug(`${peer.user} asks its place for ${file}, which is not queued`)
+        return
+      }
+      defaultPeer.placeInQueueResponse(file, this.session.uploads.placeInQueue(upload))
+    })
+
     return defaultPeer
+  }
+
+  /**
+   * What we tell peers about our upload capacity, in a UserInfoResponse and next to every search
+   * answer. A client that does not serve its files says so, instead of advertising a free slot
+   * and denying every peer that picks it for it.
+   */
+  private uploadCapacity (): {
+    uploadSlots: number
+    queueSize: number
+    slotsFree: boolean
+    uploadPermitted: UploadPermission
+  } {
+    const config = this.uploadOptions
+    const uploads = this.session.uploads
+
+    return {
+      uploadSlots: config ? config.slots : 0,
+      queueSize: uploads.waiting.length,
+      slotsFree: config ? uploads.active.length < config.slots : false,
+      uploadPermitted: config ? UploadPermission.Everyone : UploadPermission.NoOne
+    }
+  }
+
+  /**
+   * A peer asked for one of our files: checks it is really shared and puts it in the queue,
+   * which is emptied one slot at a time. Nothing is sent back when the file is accepted, the
+   * peer learns about it when the transfer is announced or when it asks for its place.
+   */
+  private async queueUpload (peer: DefaultPeer, file: string): Promise<void> {
+    const config = this.uploadOptions
+    if (!config) {
+      peer.uploadDenied(file, UPLOADS_DISABLED)
+      return
+    }
+
+    const uploads = this.session.uploads
+    const running = uploads.get(peer.user, file)
+    if (running) {
+      debug(`${peer.user} asks again for ${file}, already ${running.status}`)
+      return
+    }
+
+    // resolved against the index, so a crafted path cannot reach anything we do not share
+    const indexed = this.shared.resolve(file)
+    if (!indexed) {
+      debug(`${peer.user} wants ${file}, which is not shared`)
+      peer.uploadDenied(file, 'File not shared.')
+      return
+    }
+
+    if (uploads.waitingFor(peer.user) >= config.queueLimit) {
+      debug(`${peer.user} has ${config.queueLimit} files waiting already`)
+      peer.uploadDenied(file, 'Too many files')
+      return
+    }
+
+    const upload = uploads.queue({
+      user: peer.user,
+      file,
+      entry: indexed.entry,
+      provider: indexed.provider
+    })
+
+    upload.on('progress', progress => this.emit('upload-progress', progress))
+    upload.once('complete', evt => {
+      this.emit('upload-complete', { user: upload.user, file, sentBytes: evt.sentBytes })
+      this.serveNextInQueue()
+    })
+    upload.once('failed', error => {
+      this.emit('upload-failed', { user: upload.user, file, error })
+      // the peer is waiting for a transfer that will not come, or for a file it never gets
+      if (upload.token) peer.uploadFailed(file)
+      this.serveNextInQueue()
+    })
+
+    this.emit('upload-queued', { user: peer.user, file, place: uploads.placeInQueue(upload) })
+    await this.serveQueue()
+  }
+
+  /** Serves the queue when a slot frees, from a listener that cannot await it */
+  private serveNextInQueue (): void {
+    this.serveQueue()
+      .catch((err: Error) => debug(`cannot serve the upload queue: ${err.message}`))
+  }
+
+  /** Announces as many queued files as there are free slots, oldest request first */
+  private async serveQueue (): Promise<void> {
+    const config = this.uploadOptions
+    if (!config) return
+
+    const uploads = this.session.uploads
+    while (uploads.active.length < config.slots) {
+      const next = uploads.waiting[0]
+      if (!next) return
+
+      await this.announceUpload(next)
+    }
+  }
+
+  /**
+   * Tells the peer the file is coming, with the size the provider reports now: an entry indexed
+   * a while ago may point at a file that changed since, and the size announced here is the one
+   * the transfer is measured against.
+   */
+  private async announceUpload (upload: Upload): Promise<void> {
+    const peer = this.peerConnection(upload.user)
+    if (!peer) {
+      // it asked on a connection that is gone, it will ask again when it comes back
+      upload.fail(new Error(`No peer connection to ${upload.user}`))
+      return
+    }
+
+    let size = upload.entry.size
+    if (upload.provider.stat) {
+      try {
+        const stat = await upload.provider.stat(upload.entry)
+        if (!stat) {
+          upload.fail(new Error(`${upload.file} is gone`))
+          peer.uploadDenied(upload.file, 'File not shared.')
+          return
+        }
+        size = stat.size
+      } catch (err) {
+        upload.fail(new Error(`Cannot stat ${upload.file}: ${String(err)}`))
+        peer.uploadDenied(upload.file, 'File read error.')
+        return
+      }
+    }
+
+    const token = crypto.randomBytes(4).toString('hex')
+    this.session.uploads.bindToken(token, upload)
+    upload.requested(token, size)
+    peer.uploadRequest(upload.file, token, size)
+  }
+
+  /** The peer accepted a transfer we announced: open the file connection and send the bytes */
+  private startUpload (peer: DefaultPeer, upload: Upload): void {
+    const token = upload.token as string
+
+    if (peer.peer.host && peer.peer.port) {
+      UploadPeer.open({
+        host: peer.peer.host,
+        port: peer.peer.port,
+        session: this.session,
+        upload,
+        transferTimeout: this.transferTimeout
+      })
+      return
+    }
+
+    /*
+     * No address for the peer: ask the server to make it connect to us instead, on a connection
+     * of type F, and send the bytes on the one it pierces our firewall with.
+     */
+    debug(`no address for ${upload.user}, asking the server to relay a file connection`)
+
+    const gaveUp = setTimeout(() => {
+      if (!this.pendingIndirect[token]) return
+      delete this.pendingIndirect[token]
+      upload.fail(new Error(`${upload.user} never opened the file connection`))
+    }, PEER_TIMEOUT)
+    gaveUp.unref()
+
+    this.pendingIndirect[token] = (socket, initialData) => {
+      clearTimeout(gaveUp)
+      new UploadPeer(socket, { user: upload.user, type: 'F', token }, {
+        session: this.session,
+        upload,
+        initialData,
+        transferTimeout: this.transferTimeout
+      })
+    }
+    this.server.connectToPeer(token, upload.user, 'F')
   }
 
   private failDownload (user: string, file: string, err: Error): void {
@@ -522,9 +758,21 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     evt: { direction: number, token: string, file: string, size?: number }
   ): void {
     if (evt.direction !== 1) {
-      // the peer wants to download from us, uploading is not supported
-      debug(`${peer.peer.user} asks to download ${evt.file}, denying`)
-      peer.transferResponse(evt.token, false, 'Cancelled')
+      if (!this.servesUploads) {
+        debug(`${peer.user} asks to download ${evt.file}, uploads are disabled`)
+        peer.transferResponse(evt.token, false, UPLOADS_DISABLED)
+        return
+      }
+
+      /*
+       * A peer asking the old way, before QueueUpload existed. Answering `allowed` would let a
+       * peer that spoofed the request open the file connection itself, so the request goes
+       * through the queue like any other and the answer is the 'Queued' refusal every current
+       * client uses: the transfer is then announced with our own token.
+       */
+      debug(`${peer.user} asks to download ${evt.file} the old way, queueing it`)
+      peer.transferResponse(evt.token, false, 'Queued')
+      void this.queueUpload(peer, evt.file)
       return
     }
 
@@ -540,11 +788,17 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     setTimeout(() => peer.transferResponse(evt.token, true), TRANSFER_ACCEPT_DELAY)
   }
 
-  /** The peer answered the transfer we asked for */
+  /** The peer answered a transfer: one we asked for, or one we announced to it */
   private handleTransferResponse (
     peer: DefaultPeer,
     evt: { token: string, allowed: boolean, reason?: string }
   ): void {
+    const upload = this.session.uploads.byTransferToken(evt.token)
+    if (upload) {
+      this.handleUploadResponse(peer, upload, evt)
+      return
+    }
+
     const download = this.session.downloads.byTransferToken(evt.token)
 
     if (!evt.allowed) {
@@ -591,6 +845,27 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
       offsetDelay: 1000,
       transferTimeout: this.transferTimeout
     })
+  }
+
+  /**
+   * What the peer answered to a file we announced. A refusal frees the slot for the next one in
+   * the queue: 'Complete' is a peer telling us it has the file after all, everything else is a
+   * transfer that will not happen.
+   */
+  private handleUploadResponse (
+    peer: DefaultPeer,
+    upload: Upload,
+    evt: { token: string, allowed: boolean, reason?: string }
+  ): void {
+    if (!evt.allowed) {
+      const reason = evt.reason ?? ''
+      debug(`${peer.user} refused ${upload.file}: ${reason || 'no reason'}`)
+      upload.fail(new Error(`${peer.user} refused the file: ${reason || 'no reason'}`))
+      return
+    }
+
+    debug(`${peer.user} accepted ${upload.file}, opening the file connection`)
+    this.startUpload(peer, upload)
   }
 
   /** Files a peer sent back for one of our searches */
@@ -684,7 +959,16 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     if (!(connection instanceof DefaultPeer)) {
       throw new Error(`No peer connection to ${user}`)
     }
-    connection.fileSearchResult(matched, ticket, this.session.username)
+    connection.fileSearchResult(matched, ticket, this.session.username, this.searchAnswerState())
+  }
+
+  /**
+   * Slots and queue length sent with a search answer: what a searcher uses to pick the source it
+   * asks first, so a client with nothing free must not claim a free slot.
+   */
+  private searchAnswerState (): FileSearchResultOptions {
+    const capacity = this.uploadCapacity()
+    return { slotsFree: capacity.slotsFree, queueLength: capacity.queueSize }
   }
 
   /**
@@ -1037,6 +1321,7 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     }
 
     this.session.downloads.failAll(new Error('Client destroyed'))
+    this.session.uploads.failAll(new Error('Client destroyed'))
     this.searches.clear()
 
     Object.keys(this.peers).forEach(peer => {

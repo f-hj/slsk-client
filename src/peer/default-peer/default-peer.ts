@@ -22,8 +22,16 @@ export interface DefaultPeerOptions extends PeerOptions {
   shared?: Shared
   /** Bytes already received on the socket, after the peer init message */
   initialData?: Buffer
-  /** What is answered to a UserInfoRequest, `DEFAULT_USER_INFO` fills what is left out */
-  userInfo?: UserInfoOptions
+  /**
+   * What is answered to a UserInfoRequest, `DEFAULT_USER_INFO` fills what is left out. A
+   * function is called every time a peer asks, for the parts that change while we run.
+   */
+  userInfo?: UserInfoOptions | (() => UserInfoOptions)
+  /**
+   * true when the client serves the files it shares: the requests of the peer are then reported
+   * as events for the client to queue, instead of being denied on the spot (default: false).
+   */
+  uploads?: boolean
 }
 
 export type { TransferRequestEvent, TransferResponseEvent }
@@ -41,6 +49,10 @@ export type DefaultPeerEvents = {
   'upload-failed': [file: string]
   /** The peer refuses to upload a file, with its reason */
   'upload-denied': [evt: { file: string, reason: string }]
+  /** The peer wants one of our files, only reported when the client serves them */
+  'queue-upload': [file: string]
+  /** The peer asks where the file it is waiting for stands in our queue */
+  'place-in-queue-request': [file: string]
   /** What the peer tells about itself, its answer to a UserInfoRequest */
   'user-info': [info: UserInfo]
 }
@@ -52,8 +64,9 @@ export type DefaultPeerEvents = {
 export default class DefaultPeer extends Peer<DefaultPeerEvents> {
   /** Shared files, used to answer share browsing and folder content requests */
   readonly shared?: Shared
-  /** What is answered to a UserInfoRequest of this peer, the defaults fill what is left out */
-  readonly userInfo?: UserInfoOptions
+  private readonly userInfoSource?: UserInfoOptions | (() => UserInfoOptions)
+  /** true when the client serves its shared files, so a request for one is worth reporting */
+  readonly serves: boolean
   /**
    * Whether this peer understands the upload queue (QueueUpload 43, PlaceInQueueRequest 51),
    * which nothing on the wire announces: `undefined` until it answered anything about it, true
@@ -64,7 +77,8 @@ export default class DefaultPeer extends Peer<DefaultPeerEvents> {
   constructor (socket: net.Socket, peer: PeerInfo, options: DefaultPeerOptions) {
     super(socket, peer, options)
     this.shared = options.shared
-    this.userInfo = options.userInfo
+    this.userInfoSource = options.userInfo
+    this.serves = options.uploads === true
 
     this.conn.on('connect', () => {
       if (peer.token) {
@@ -84,9 +98,24 @@ export default class DefaultPeer extends Peer<DefaultPeerEvents> {
 
     msgs.on('message', (msg: Message) => handleDefaultPeerMessage(msg, this))
 
-    if (options.initialData && options.initialData.length > 0) {
-      msgs.write(options.initialData)
+    const initialData = options.initialData
+    if (initialData && initialData.length > 0) {
+      /*
+       * A peer often sends its first message in the same segment as its PeerInit, and whoever
+       * built us registers its listeners once the constructor returned: parsing those bytes now
+       * would report them to nobody. A microtask runs before the event loop comes back with more
+       * socket data, so nothing is reordered either.
+       */
+      queueMicrotask(() => {
+        if (this.conn.destroyed) return
+        msgs.write(initialData)
+      })
     }
+  }
+
+  /** What is answered to a UserInfoRequest of this peer, as it stands right now */
+  get userInfo (): UserInfoOptions | undefined {
+    return typeof this.userInfoSource === 'function' ? this.userInfoSource() : this.userInfoSource
   }
 
   /** The messages of a peer connection have an uint32 code, unlike the init ones */
@@ -105,6 +134,11 @@ export default class DefaultPeer extends Peer<DefaultPeerEvents> {
     this.send(messages.transferRequest(file, token), `${file} token ${token}`)
   }
 
+  /** TransferRequest (40) direction 1: announces a file we are about to send */
+  uploadRequest (file: string, token: string, size: number): void {
+    this.send(messages.uploadRequest(file, token, size), `${file} token ${token}, ${size} bytes`)
+  }
+
   /** TransferResponse (41): answers a transfer a peer announced */
   transferResponse (token: string, allowed = true, reason?: string): void {
     this.send(
@@ -121,6 +155,16 @@ export default class DefaultPeer extends Peer<DefaultPeerEvents> {
   /** PlaceInQueueRequest (51): asks our position in the upload queue of the peer */
   placeInQueueRequest (file: string): void {
     this.send(messages.placeInQueueRequest(file), file)
+  }
+
+  /** PlaceInQueueResponse (44): tells the peer where its file stands in our queue */
+  placeInQueueResponse (file: string, place: number): void {
+    this.send(messages.placeInQueueResponse(file, place), `${file} at ${place}`)
+  }
+
+  /** UploadFailed (46): tells the peer the transfer we announced will not happen */
+  uploadFailed (file: string): void {
+    this.send(messages.uploadFailed(file), file)
   }
 
   /** UploadDenied (50): tells the peer it will not get the file */

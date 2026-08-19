@@ -1,4 +1,5 @@
 import Downloads from './download/downloads'
+import Uploads from './upload/uploads'
 
 /**
  * State of one client that the peer connections and the file transfers need to see. Passed
@@ -9,4 +10,6 @@ export default class Session {
   /** Name this client logs in as, empty until the login is sent */
   username = ''
   readonly downloads = new Downloads()
+  /** Files served to the peers that asked for them, queue included */
+  readonly uploads = new Uploads()
 }

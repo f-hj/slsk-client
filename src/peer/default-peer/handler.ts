@@ -8,6 +8,13 @@ import type DefaultPeer from './default-peer'
 const debug = createDebug('slsk:peer:default:i')
 
 /**
+ * Reason sent to a peer asking for a file of a client that shares without serving. Not one of
+ * the reasons clients special case, so it reaches the user of the asking client as it is,
+ * instead of looking like a transfer somebody cancelled.
+ */
+export const UPLOADS_DISABLED = 'Uploads are disabled'
+
+/**
  * Handles a message received on a peer connection (type P): answers what belongs to the
  * connection itself (share browsing, refusing uploads) and reports the rest to the client,
  * which is the one keeping track of searches and transfers.
@@ -92,8 +99,14 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
     }
     case 43: {
       const file = msg.str()
-      debug(`${from} wants ${file}, uploading is not supported`)
-      peer.uploadDenied(file, 'Cancelled')
+      if (!peer.serves) {
+        debug(`${from} wants ${file}, uploads are disabled`)
+        peer.uploadDenied(file, UPLOADS_DISABLED)
+        break
+      }
+      // the client owns the queue and the slots, it decides what happens to this request
+      debug(`${from} wants ${file}`)
+      peer.emit('queue-upload', file)
       break
     }
     case 44: {
@@ -118,7 +131,12 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
     }
     case 51: {
       const file = msg.str()
-      debug(`${from} asks its place for ${file}, nothing is queued`)
+      if (!peer.serves) {
+        debug(`${from} asks its place for ${file}, nothing is queued`)
+        break
+      }
+      // the queue is the client's, only it knows where the file stands
+      peer.emit('place-in-queue-request', file)
       break
     }
     default: {

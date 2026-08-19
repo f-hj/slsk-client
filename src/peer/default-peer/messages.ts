@@ -204,6 +204,18 @@ const defaultPeerMessages = {
       .rawHexStr(token) // token
       .str(file)
   },
+  /**
+   * TransferRequest (40) with direction 1: announces a file we are about to send, which is how
+   * an upload starts once a slot is free. The peer answers with a TransferResponse (41).
+   */
+  uploadRequest: (file: string, token: string, size: number): Message => {
+    return new Message()
+      .int32(40) // code
+      .int32(1) // direction, 1 for a file we send
+      .rawHexStr(token)
+      .str(file)
+      .int64(size)
+  },
   /** TransferResponse (41), answered to a TransferRequest received from a peer */
   transferResponse: (token: string, allowed = true, reason?: string): Message => {
     const msg = new Message()
@@ -219,6 +231,19 @@ const defaultPeerMessages = {
   queueUpload: (file: string): Message => {
     return new Message()
       .int32(43)
+      .str(file)
+  },
+  /** PlaceInQueueResponse (44): tells a peer where its file stands in our queue */
+  placeInQueueResponse: (file: string, place: number): Message => {
+    return new Message()
+      .int32(44)
+      .str(file)
+      .int32(place)
+  },
+  /** UploadFailed (46): tells a peer the transfer we announced will not happen after all */
+  uploadFailed: (file: string): Message => {
+    return new Message()
+      .int32(46)
       .str(file)
   },
   /** UploadDenied (50) */

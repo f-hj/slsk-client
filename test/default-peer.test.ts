@@ -197,7 +197,7 @@ describe('class DefaultPeer', () => {
     assert.strictEqual(answer.str(), 'Cancelled')
   })
 
-  it('denies a queue upload request', async () => {
+  it('denies a queue upload request when the client does not serve its files', async () => {
     pair.remote.write(new Message()
       .int32(43) // QueueUpload
       .str(file)
@@ -207,7 +207,28 @@ describe('class DefaultPeer', () => {
     answer.int32() // size
     assert.strictEqual(answer.int32(), 50) // UploadDenied
     assert.strictEqual(answer.str(), file)
-    assert.strictEqual(answer.str(), 'Cancelled')
+    // said as it is, so the peer does not report a transfer somebody cancelled
+    assert.strictEqual(answer.str(), 'Uploads are disabled')
+  })
+
+  it('reports a queue upload request when the client serves its files', async () => {
+    // its own connection: two peers reading the same socket would both answer it
+    const serving = await connectedPair()
+    const peer = new DefaultPeer(serving.local, { user }, { session, shared, uploads: true })
+
+    try {
+      const asked = new Promise<string>(resolve => peer.once('queue-upload', resolve))
+
+      serving.remote.write(new Message()
+        .int32(43) // QueueUpload
+        .str(file)
+        .getBuff())
+
+      assert.strictEqual(await asked, file, 'the client decides what happens to the request')
+    } finally {
+      peer.destroy()
+      serving.close()
+    }
   })
 
   it('answers a shared file list request with the real shares', async () => {

@@ -68,21 +68,24 @@ Implemented in [`src/peer/default-peer/`](../src/peer/default-peer/).
 | 9 | FileSearchResponse (send) | zlib: user, token, n × (code **1**, filename, uint64 size, ext, attrs), bool slotfree, uint32 avgspeed, uint32 queue, uint32 unknown, private results | zlib ✅, file code 1 ✅, real extension ✅, uint64 sizes ✅, slotfree/avgspeed/queue configurable ✅, trailing unknown + private-results count ✅ | ✅ |
 | 9 | FileSearchResponse (recv) | same | zlib ✅; parses user, token, files incl. every attribute code the peer sent, uint64 sizes ✅, slotfree, avgspeed, queue length; tolerates truncated trailing fields from older peers | ✅ |
 | 15 | UserInfoRequest (send/recv) | empty | Sent by `getUserInfo(user)`. Inbound: answered with UserInfoResponse built from the `userInfo` option | ✅ |
-| 16 | UserInfoResponse (send) | description, bool has_picture, [picture], uint32 uploadslots, uint32 queuesize, bool slotsfree, [uint32 uploadpermitted] | All fields, picture and upload permission included, from the `userInfo` option | ✅ |
+| 16 | UserInfoResponse (send) | description, bool has_picture, [picture], uint32 uploadslots, uint32 queuesize, bool slotsfree, [uint32 uploadpermitted] | All fields, picture and upload permission included. Slots, queue size and permission come from the real state of the upload queue, overridden by whatever the `userInfo` option sets | ✅ |
 | 16 | UserInfoResponse (recv) | same | Parsed and surfaced by `getUserInfo()`; peers that stop after any field are tolerated, and a picture shorter than announced is dropped | ✅ |
 | 36 | FolderContentsRequest (recv) | **uint32 token, string folder** | Parsed as documented and answered with FolderContentsResponse (37) built from the index | ✅ |
 | 37 | FolderContentsResponse | zlib folder listing | Echoes the token and the requested folder, then the folder → files structure, zlib compressed | ✅ |
-| 40 | TransferRequest (send) | dir 0: direction, token, filename | Sent only to a peer that answered nothing to QueueUpload (43), which is the request tried first | ✅ (legacy fallback) |
-| 40 | TransferRequest (recv) | dir 1 adds **uint64** filesize | Reported to the client, which accepts after 200 ms with TransferResponse **only when it asked for that file** and refuses the rest. Filesize read as **uint64** ✅; dir-0 requests (peer downloading from us) are denied with a reason | ✅ |
-| 41 | TransferResponse (send) | token, bool allowed | Sends `token, 1` (upload flavour, 41b) | ✅ |
-| 41 | TransferResponse (recv) | allowed=1 [+ uint64 size in deprecated 41a] / allowed=0 + reason | Handled: allowed → opens F connection; 'Queued' → download marked queued and its place asked for; any other reason → the download fails with it | ✅ |
+| 40 | TransferRequest (send) | dir 0: direction, token, filename; dir 1 adds **uint64** filesize | dir 0 sent only to a peer that answered nothing to QueueUpload (43), which is the request tried first. dir 1 announces an upload when a slot frees, with the size the provider reports at that moment | ✅ |
+| 40 | TransferRequest (recv) | dir 1 adds **uint64** filesize | Reported to the client, which accepts after 200 ms with TransferResponse **only when it asked for that file** and refuses the rest. Filesize read as **uint64** ✅. A dir-0 request (peer downloading from us) is queued and answered with the `Queued` refusal, as nicotine does, then announced with our own dir-1 request — answering `allowed` would let a spoofed request open a file connection. Denied outright when uploads are off | ✅ |
+| 41 | TransferResponse (send) | token, bool allowed [, reason] | Sends `token, 1` for a transfer we asked for (upload flavour, 41b), and `token, 0, reason` to refuse one | ✅ |
+| 41 | TransferResponse (recv) | allowed=1 [+ uint64 size in deprecated 41a] / allowed=0 + reason | Handled for both directions. Our download: allowed → opens the F connection; 'Queued' → marked queued and its place asked for; any other reason → it fails with it. Our upload: allowed → the F connection is opened towards the peer; a refusal frees the slot | ✅ |
 | 43 | QueueUpload (send) | string filename | Download initiation: the peer queues the file and comes back with its own TransferRequest. A peer that answers nothing at all is asked with TransferRequest(dir 0) instead, see §6.5 | ✅ |
-| 43 | QueueUpload (recv) | string filename | Answered with UploadDenied — uploading is not supported | ✅ (denied) |
+| 43 | QueueUpload (recv) | string filename | Resolved against the share index and queued when `uploads` is on: unknown paths are refused with `File not shared.`, a peer over `queueLimit` with `Too many files`. Answered with UploadDenied('Uploads are disabled') when the client only shares a file list | ✅ |
 | 44 | PlaceInQueueResponse (recv) | filename, uint32 place | Surfaced as the `download-queue` client event | ✅ |
+| 44 | PlaceInQueueResponse (send) | filename, uint32 place | Answers a PlaceInQueueRequest with the position in our queue, counted from 1 | ✅ |
 | 46 | UploadFailed (recv) | string filename | Handled — rejects the matching pending download / destroys the stream | ✅ |
+| 46 | UploadFailed (send) | string filename | Sent when a transfer we had announced cannot happen after all (provider error, connection lost) | ✅ |
 | 50 | UploadDenied (recv) | filename, reason | Handled — rejects the pending download promise with the peer's reason (or destroys the stream) and forgets the transfer tokens | ✅ |
+| 50 | UploadDenied (send) | filename, reason | `File not shared.`, `File read error.`, `Too many files`, or `Uploads are disabled` for a client that shares without serving. None of them is one of the internal statuses clients rewrite to 'Cancelled' | ✅ |
 | 51 | PlaceInQueueRequest (send) | string filename | Sent after QueueUpload to learn our position in the queue of the peer | ✅ |
-| 51 | PlaceInQueueRequest (recv) | string filename | Parsed, log only — nothing is ever queued on our side | 🟠 |
+| 51 | PlaceInQueueRequest (recv) | string filename | Answered with PlaceInQueueResponse (44) when the file is waiting in our queue, ignored when it is not. Log only when uploads are off, since nothing can be queued then | ✅ |
 | 8, 10, 14, 33, 34, 42, 47–49, 52 | Obsolete/deprecated messages | — | Not implemented | ⚪ |
 
 ## 4. Distributed messages (type D, code field: `uint8`)
@@ -110,6 +113,7 @@ Documented sequence: connect → PeerInit(token 0)/PierceFireWall → downloader
 | Offset | uint64 offset (0 = fresh, other = resume) | Sends the offset of the download, non zero when `download({ offset })` resumes a partial file | ✅ |
 | Data & completion | Downloader closes at expected size | Buffers data (and feeds the optional stream), calls `conn.end()` once the expected size is received: the size the peer announced, or the one the search result reported when no message carried it (legacy flow). A transfer whose size is unknown ends when the uploader closes | ✅ |
 | Completion bookkeeping | — | File written to disk, promise resolved with path + buffer | ✅ (client-side concern) |
+| Outbound F to send a file | PeerInit(token 0), then the uint32 transfer token, read the uint64 offset, stream | Implemented as documented: PeerInit carries token 0, FileTransferInit carries the transfer token, the offset the downloader sends is honoured (`read({ start })`), and the bytes go out with backpressure. A peer we have no address for is asked through ConnectToPeer(type F) to open the connection itself | ✅ |
 
 ## 6. Process-level compliance
 
@@ -143,14 +147,24 @@ A download the caller gives up on (`Download.cancel()`, an aborted `AbortSignal`
 
 On the viability of the legacy flow across the network: **no mainstream client has dropped support for receiving dir-0 requests** — the docs note that "Nicotine+ ≥ 3.0.3, Museek+ and the official clients use QueueUpload today" as senders, but keep understanding dir-0 because "clients like slskd and Seeker still use this method for downloading". The practical caveat is different: the docs *discourage* answering a dir-0 request with `allowed=1` (a spoofed peer could initiate the file connection), recommending a "Queued" rejection followed by the uploader's own TransferRequest. So against modern uploaders the legacy flow degrades into the queued path anyway — both response paths are handled here.
 
-### 6.6 Sharing — ✅ browsing and searching, ❌ uploading
+### 6.6 Sharing — ✅ browsing, searching and uploading
 Shares come from [`ShareProvider`](../src/share/provider.ts) implementations (local file system, memory, or anything a user plugs in) indexed by [`ShareIndex`](../src/share/share-index.ts). What is compliant: real SharedFoldersFiles(35) counts, compressed SharedFileListResponse(5), FolderContentsResponse(37), FileSearchResponse(9) with sizes, extensions and attributes, and virtual `\` separated paths as other clients advertise.
 
-What is still missing is serving the bytes: TransferRequest(dir 1) is never sent, QueueUpload(43) and TransferRequest(dir 0) are answered with a denial, PlaceInQueueRequest(51) answers nothing, and no file connection is ever opened as the uploader. The `read(entry, { start })` side of the provider interface exists for it and is unused so far.
+Serving the bytes is implemented, behind the `uploads` option (off by default, and a client that does not serve says so: 0 slots, no free slot and UploadPermission.NoOne in its user info, `slotfree=0` in its search answers, and UploadDenied('Uploads are disabled') to whoever asks anyway).
+
+The uploading flow, when it is on: QueueUpload(43) → the path is resolved against the index → the file waits in one queue, oldest request first, its position answered to PlaceInQueueRequest(51) → a free slot announces it with TransferRequest(dir 1, our own token, the size the provider reports at that moment) → TransferResponse(allowed) → PeerInit('F', token 0) + FileTransferInit(token) on a file connection → the uint64 offset the downloader sends is honoured, and `read(entry, { start })` streams the rest at the pace the peer reads it.
+
+Deviations and deliberate choices:
+
+- a legacy TransferRequest(dir 0) is **not** answered `allowed=1`, as the docs recommend: it is queued and refused with 'Queued', then announced with our own dir-1 request, so nothing but a transfer we announced can open a file connection
+- refusal reasons are the documented ones (`File not shared.`, `File read error.`, `Too many files`), none of which a client rewrites to 'Cancelled'
+- a peer whose address we do not have is asked, with ConnectToPeer(type F), to open the file connection itself, so firewalled downloaders are served
+- a downloader that stops reading for `transferTimeout` ms loses the connection and the slot, and UploadFailed(46) is sent when a transfer we had announced cannot happen
+- privileged users get no priority in the queue, and there is no per-peer rate limit or ban list
 
 ### 6.7 User info — ✅ both ways
 
-`getUserInfo(user)` asks a peer with UserInfoRequest(15) and resolves with what it answers, picture included. Incoming requests are answered from the `userInfo` client option. Note that this is the *peer* message: the server-side GetUserStats(36)/GetUserStatus(7) are still not implemented.
+`getUserInfo(user)` asks a peer with UserInfoRequest(15) and resolves with what it answers, picture included. Incoming requests are answered from the real upload state (slots, queue size, free slot, permission), with whatever the `userInfo` client option sets on top. Note that this is the *peer* message: the server-side GetUserStats(36)/GetUserStatus(7) are still not implemented.
 
 ### 6.8 Chat, rooms, interests — ❌ not implemented (declared out of scope)
 
@@ -172,5 +186,5 @@ Missing protocol behavior (features):
 7. ~~Indirect connection requests (send ConnectToPeer 18) + CantConnectToPeer reporting~~ — **done**, see `connectToUser()`.
 8. ~~Modern download initiation (QueueUpload 43) and queue tracking (44/51)~~ — **done**, QueueUpload is the default flow, the queue place is surfaced as the `download-queue` event.
 9. Distributed-network upkeep (BranchLevel/BranchRoot to server, HaveNoParent(0), Ping, EmbeddedMessage 93, children).
-10. Actual uploads: upload slots and queue (43/44/51), TransferRequest(dir 1), and the uploader side of the file connection. Browsing and searching the shares is implemented (see 6.6).
+10. ~~Actual uploads: upload slots and queue (43/44/51), TransferRequest(dir 1), and the uploader side of the file connection~~ — **done**, behind the `uploads` option (see 6.6). What is still missing around them: privileged users are not served first, and there is no per-peer rate limit or ban list.
 11. ~~Download resume (non-zero offset on F connections)~~ — **done**, see `DownloadOptions.offset`.

@@ -15,6 +15,20 @@ export interface ReconnectOptions {
   maxDelay?: number
 }
 
+/** How the shared files are served to the peers that ask for them */
+export interface UploadOptions {
+  /**
+   * How many files are sent at the same time (default: 1). Every other request waits in the
+   * queue, where the peer is told its place when it asks for it.
+   */
+  slots?: number
+  /**
+   * How many files one peer may have waiting at once (default: 100). Beyond that its requests
+   * are refused with 'Too many files', which is what tells a client to come back later.
+   */
+  queueLimit?: number
+}
+
 /** Everything a client needs to know before it logs in */
 export interface SlskClientOptions {
   /** Soulseek server host (default: server.slsknet.org) */
@@ -30,6 +44,12 @@ export interface SlskClientOptions {
    * (object storage, database, remote API...).
    */
   shares?: ShareProvider | ShareProvider[]
+  /**
+   * Whether the shared files are actually sent to the peers that ask for them (default: false).
+   * A client that shares without uploading answers browsing and searches, but refuses every
+   * transfer: set it to `true`, or to `{ slots, queueLimit }`, to serve the bytes as well.
+   */
+  uploads?: boolean | UploadOptions
   /** Time in ms after which the login attempt fails (default: 2000) */
   timeout?: number
   /**
@@ -162,6 +182,20 @@ export interface DownloadProgress {
   sizeAnnounced: boolean
   /** Ratio between 0 and 1, undefined while the size of the file is unknown */
   progress?: number
+}
+
+/** Where a file we are sending to a peer stands */
+export interface UploadProgress {
+  /** Peer receiving the file */
+  user: string
+  /** Full path of the file, as the peer asked for it */
+  file: string
+  /** Bytes sent so far, the offset the peer resumed from included */
+  sentBytes: number
+  /** Size of the file */
+  totalBytes: number
+  /** Ratio between 0 and 1 */
+  progress: number
 }
 
 export interface QueuePlace {

@@ -46,12 +46,17 @@ export interface MockServerEvents {
 
 export default class MockServer extends EventEmitter<MockServerEvents> {
   private server: net.Server
+  /** Every connection accepted, closed when the mock is destroyed */
+  private readonly clients: net.Socket[] = []
 
   constructor (address: ServerAddress) {
     super()
 
     this.server = net.createServer(client => {
       debug('Client connected')
+      this.clients.push(client)
+      // a client that goes away resets this connection, which must not crash the test run
+      client.on('error', (err: NodeJS.ErrnoException) => debug(`client socket error ${err.code}`))
       const msgs = new Messages()
       const receivedCodes: number[] = []
 
@@ -161,6 +166,7 @@ export default class MockServer extends EventEmitter<MockServerEvents> {
   }
 
   destroy (): void {
+    this.clients.forEach(client => client.destroy())
     this.server.close()
   }
 }

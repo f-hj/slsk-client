@@ -74,10 +74,11 @@ const client = new SlskClient({ shares: fsShareProvider({ folders: ['/home/me/mu
 |port|choose a different port|2242|
 |incomingPort|Port used for incoming connection|2234|
 |shares|One or more [share providers](#sharing): folders of the local file system, files in memory, or anything else|[]|
+|uploads|`true`, or `{ slots?, queueLimit? }`, to send the shared files to the peers that ask for them|false|off by default: a client shares a file list and refuses every transfer until you turn it on|
 |timeout|Time in ms before the login attempt fails|2000|
 |downloadRetries|How many times a transfer that stopped early is asked for again|3|`0` to fail an interrupted download right away|
 |transferTimeout|Time in ms of silence on a file connection before the transfer is asked for again|60000|A file connection carries the transfer or nothing, so an idle one is dead|
-|userInfo|What is answered to a peer asking for our info: `description`, `picture`, `uploadSlots`, `queueSize`, `slotsFree`, `uploadPermitted`|`{ description: '', uploadSlots: 1, queueSize: 0, slotsFree: true, uploadPermitted: UploadPermission.Everyone }`|Only the keys you set are overridden|
+|userInfo|What is answered to a peer asking for our info: `description`, `picture`, `uploadSlots`, `queueSize`, `slotsFree`, `uploadPermitted`|no description, and the slots, queue and permission of the `uploads` option as they stand|Only the keys you set are overridden, so a peer is told the truth about the slots unless you say otherwise|
 |reconnect|`false`, or `{ retries?, delay?, maxDelay? }`, to log in again when the server connection drops|`{ retries: Infinity, delay: 1000, maxDelay: 60000 }`|the delay doubles after every failed attempt, up to `maxDelay`|
 |downloadTimeout|ms without any progress after which a download fails|none|a queued file can legitimately wait for hours, so there is no timeout unless you set one|
 |queueFallbackDelay|ms to wait for a sign that a peer understands `QueueUpload` before asking it the old way|10000|rarely worth changing, it only delays downloads from peers old enough to ignore the queue messages|
@@ -342,6 +343,10 @@ Closes the connection to the server, the incoming-peer listener and every peer c
 |`download-progress`|`{ user, file, receivedBytes, totalBytes?, sizeAnnounced, progress? }`|progress of a running download. `sizeAnnounced` is false while `totalBytes` is only the size the search result announced|
 |`download-queue`|`{ user, file, place }`|our place in the upload queue of the peer|
 |`download-interrupted`|`{ user, file, receivedBytes, size?, attempts }`|a transfer stopped early and is being asked for again from there|
+|`upload-queued`|`{ user, file, place }`|a peer asked for one of our files, `place` is where it waits (0 when it starts right away)|
+|`upload-progress`|`{ user, file, sentBytes, totalBytes, progress }`|progress of a file being sent|
+|`upload-complete`|`{ user, file, sentBytes }`|a file has been sent whole|
+|`upload-failed`|`{ user, file, error }`|a file could not be sent, the peer has been told|
 |`server-error`|`Error`|error on the connection to the slsk server|
 |`server-disconnect`|`{ reconnecting }`|the connection to the slsk server is gone. `reconnecting` is false when the client will not log in again, which makes it the moment to `destroy()` it|
 |`server-reconnect`|—|logged in again after a lost connection|
@@ -467,9 +472,50 @@ Search requests received from the distributed network are matched against the wh
 of every shared file, with the same `-` exclusion rules as `search()`. A provider that implements
 `search()` answers for its own files instead.
 
-Peers that then ask for one of the files are denied for now: serving the bytes (upload slots,
-queue and file connections) is the next step, and the `read()` side of the interface is what it
-will use.
+### Serving the files
+
+Sharing a file list and sending the files are two different things: a client denies every transfer
+until `uploads` says otherwise.
+
+```ts
+const client = new SlskClient({
+  shares: fsShareProvider({ folders: ['/home/me/music'] }),
+  uploads: { slots: 2, queueLimit: 50 }
+})
+
+client.on('upload-queued', ({ user, file, place }) => console.log(`${user} waits at ${place}`))
+client.on('upload-progress', ({ file, progress }) => console.log(file, progress))
+client.on('upload-complete', ({ user, file }) => console.log(`sent ${file} to ${user}`))
+```
+
+|key|value|default|
+|---|-----|-------|
+|`slots`|How many files are sent at the same time|1|
+|`queueLimit`|How many files one peer may keep waiting|100|
+
+What happens when a peer asks for a file:
+
+- the path it sends is resolved against the index, so it can only ever reach a file that was
+  advertised to it: an unknown one is refused with `File not shared.`
+- the file goes into a single queue, oldest request first, and the peer is told its place when it
+  asks for it (`PlaceInQueueRequest`)
+- when a slot frees, the size is read from the provider again (`stat()`), the transfer is
+  announced (`TransferRequest`), and the bytes are read from `read({ start })` — the peer says
+  where to start, so a peer resuming a partial file only gets the rest
+- the bytes go out at the pace the peer reads them, and a peer that stops reading for
+  `transferTimeout` ms loses the slot
+- a peer that cannot accept a connection is asked, through the server, to open the file connection
+  itself, so a client behind a router serves firewalled peers as well
+
+`client.uploads` lists what is running and waiting, and `slotsFree`, `queueSize` and
+`uploadSlots` sent to peers (in a user info answer and next to every search result) are computed
+from that same state: a client that serves nothing says so instead of being picked and then
+refusing.
+
+A request made the way clients did before the upload queue existed (`TransferRequest` with
+direction 0) goes through the same queue: it is answered with the `Queued` refusal every current
+client sends, then announced with our own token. Nothing else lets a peer open a file connection
+we did not ask for.
 
 ## Breaking changes since 2.x
 
