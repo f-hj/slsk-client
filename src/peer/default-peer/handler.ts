@@ -14,12 +14,14 @@ const debug = createDebug('slsk:peer:default:i')
  */
 export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPeer): void {
   const user = peer.user
+  // which connection carried it: a peer often holds one it opened and one we opened
+  const from = peer.label
   const size = msg.int32()
   // 4 is a message carrying nothing but its code, GetSharedFileList and UserInfoRequest do
   if (size < 4) return
 
   const code = msg.int32()
-  debug(`${user} recv ${nameOf(PEER_MESSAGES, code)}, ${size} bytes`)
+  debug(`${from} recv ${nameOf(PEER_MESSAGES, code)}, ${size} bytes`)
 
   switch (code) {
     case 4: {
@@ -39,7 +41,7 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
         try {
           result = parseFileSearchResult(buffer)
         } catch (parseError) {
-          debug(`${user} cannot parse FileSearchResult: ${String(parseError)}`)
+          debug(`${from} cannot parse FileSearchResult: ${String(parseError)}`)
           return
         }
 
@@ -56,7 +58,7 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
       try {
         info = parseUserInfo(msg, user)
       } catch (parseError) {
-        debug(`${user} cannot parse UserInfoResponse: ${String(parseError)}`)
+        debug(`${from} cannot parse UserInfoResponse: ${String(parseError)}`)
         break
       }
       peer.emit('user-info', info)
@@ -65,7 +67,7 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
     case 36: {
       const token = msg.rawHexStr(4)
       const folder = msg.str()
-      debug(`${user} wants the contents of ${folder}`)
+      debug(`${from} wants the contents of ${folder}`)
       if (!peer.shared) break
       const files = peer.shared.filesInFolder(folder)
       peer.send(messages.folderContentsResponse(token, folder, files), `${folder}, ${files.length} files`)
@@ -76,7 +78,7 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
       const token = msg.rawHexStr(4)
       const file = msg.str()
       const size = direction === 1 ? msg.int64() : undefined
-      debug(`${user} direction ${direction}, ${file}`)
+      debug(`${from} direction ${direction}, ${file}`)
       peer.emit('transfer-request', { direction, token, file, size })
       break
     }
@@ -84,43 +86,43 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
       const token = msg.rawHexStr(4)
       const allowed = msg.int8() === 1
       const reason = allowed ? undefined : msg.str()
-      debug(`${user} token ${token} allowed ${String(allowed)}${reason ? ` (${reason})` : ''}`)
+      debug(`${from} token ${token} allowed ${String(allowed)}${reason ? ` (${reason})` : ''}`)
       peer.emit('transfer-response', { token, allowed, reason })
       break
     }
     case 43: {
       const file = msg.str()
-      debug(`${user} wants ${file}, uploading is not supported`)
+      debug(`${from} wants ${file}, uploading is not supported`)
       peer.uploadDenied(file, 'Cancelled')
       break
     }
     case 44: {
       const file = msg.str()
       const place = msg.int32()
-      debug(`${user} places us at ${place} for ${file}`)
+      debug(`${from} places us at ${place} for ${file}`)
       peer.emit('place-in-queue', { file, place })
       break
     }
     case 46: {
       const file = msg.str()
-      debug(`${user} gave up on ${file}`)
+      debug(`${from} gave up on ${file}`)
       peer.emit('upload-failed', file)
       break
     }
     case 50: {
       const file = msg.str()
       const reason = msg.str()
-      debug(`${user} refuses ${file}: ${reason}`)
+      debug(`${from} refuses ${file}: ${reason}`)
       peer.emit('upload-denied', { file, reason })
       break
     }
     case 51: {
       const file = msg.str()
-      debug(`${user} asks its place for ${file}, nothing is queued`)
+      debug(`${from} asks its place for ${file}, nothing is queued`)
       break
     }
     default: {
-      debug(`${user} nothing is done with ${nameOf(PEER_MESSAGES, code)}`)
+      debug(`${from} nothing is done with ${nameOf(PEER_MESSAGES, code)}`)
     }
   }
 }

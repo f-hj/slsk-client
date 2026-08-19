@@ -92,7 +92,7 @@ export default class DefaultPeer extends Peer<DefaultPeerEvents> {
   /** The messages of a peer connection have an uint32 code, unlike the init ones */
   protected override logSent (msg: Message, detail?: string): void {
     const name = nameOf(PEER_MESSAGES, msg.data.readUInt32LE(0))
-    debug(`${this.user} send ${name}, ${msg.data.length} bytes${detail ? `: ${detail}` : ''}`)
+    debug(`${this.label} send ${name}, ${msg.data.length} bytes${detail ? `: ${detail}` : ''}`)
   }
 
   /** UserInfoRequest (15): asks the peer what it tells about itself */

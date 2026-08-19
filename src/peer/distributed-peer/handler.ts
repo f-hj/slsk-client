@@ -19,7 +19,7 @@ export default function handleDistributedPeerMessage (msg: Message, peer: Distri
   // every search of the whole network travels through here, several times a second: logging
   // them one by one buries everything else, so only what is not a search is named
   if (!isSearch(code)) {
-    debug(`${peer.user} recv ${nameOf(DISTRIBUTED_MESSAGES, code)}, ${size} bytes`)
+    debug(`${peer.label} recv ${nameOf(DISTRIBUTED_MESSAGES, code)}, ${size} bytes`)
   }
   handleCode(code, msg, peer)
 }
@@ -30,7 +30,8 @@ function isSearch (code: number): boolean {
 }
 
 function handleCode (code: number, msg: Message, peer: DistributedPeer): void {
-  const user = peer.user
+  // which connection carried it, the parent name alone does not say
+  const from = peer.label
 
   switch (code) {
     case 0: {
@@ -43,13 +44,13 @@ function handleCode (code: number, msg: Message, peer: DistributedPeer): void {
     }
     case 4: {
       const branchLevel = msg.int32()
-      debug(`${user} Branch Level ${branchLevel}`)
+      debug(`${from} Branch Level ${branchLevel}`)
       peer.emit('branch-level', branchLevel)
       break
     }
     case 5: {
       const branchRoot = msg.str()
-      debug(`${user} Branch Root ${branchRoot}`)
+      debug(`${from} Branch Root ${branchRoot}`)
       peer.emit('branch-root', branchRoot)
       break
     }
@@ -61,11 +62,11 @@ function handleCode (code: number, msg: Message, peer: DistributedPeer): void {
         break
       }
       // anything else embedded is unexpected and rare enough to be worth a line
-      debug(`${user} recv ${nameOf(DISTRIBUTED_MESSAGES, code)} wrapping code ${embedded}`)
+      debug(`${from} recv ${nameOf(DISTRIBUTED_MESSAGES, code)} wrapping code ${embedded}`)
       break
     }
     default: {
-      debug(`${user} nothing is done with ${nameOf(DISTRIBUTED_MESSAGES, code)}`)
+      debug(`${from} nothing is done with ${nameOf(DISTRIBUTED_MESSAGES, code)}`)
     }
   }
 }

@@ -376,7 +376,9 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
 
     this.listen.on('new-peer', evt => {
       const peer = evt.peer
-      if (this.peers[peer.user]) {
+      if (this.isOurOwnName(peer.user)) {
+        this.dropSelfConnection(evt.socket, peer.user)
+      } else if (this.peers[peer.user]) {
         debug(`already connected to ${peer.user}, dropping the connection it just opened` +
           `${evt.initialData ? ` and the ${evt.initialData.length} bytes it sent on it` : ''}`)
       } else {
@@ -388,6 +390,10 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
 
     // a peer starts sending a file it queued for us
     this.listen.on('file-transfer', evt => {
+      if (this.isOurOwnName(evt.user)) {
+        this.dropSelfConnection(evt.socket, evt.user)
+        return
+      }
       debug(`incoming file transfer from ${evt.user}`)
       new FilePeer(evt.socket, { user: evt.user, type: 'F' }, {
         session: this.session,
@@ -410,6 +416,25 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
     })
 
     this.server.setWaitPort(this.incomingPort)
+  }
+
+  /**
+   * true when an incoming connection introduces itself with the name we logged in as. A PeerInit
+   * carries the name of whoever opened the connection, and that name is ours on the network, so
+   * the only things that send it are this client reaching its own address and a peer lying about
+   * who it is.
+   */
+  private isOurOwnName (user: string): boolean {
+    return this.session.username !== '' && user === this.session.username
+  }
+
+  /**
+   * Closes such a connection. Keeping it would put us in our own peer map, where a search answer
+   * or a download would then be sent to ourselves instead of to the peer that asked.
+   */
+  private dropSelfConnection (socket: net.Socket, user: string): void {
+    debug(`a connection introduced itself as ${user}, which is the name we logged in as: closing it`)
+    socket.destroy()
   }
 
   /**

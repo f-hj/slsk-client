@@ -20,7 +20,7 @@ export default function createFileTransferHandler (peer: FilePeer): (data: Buffe
     const download = peer.resolveDownload()
     if (!download) {
       // nothing is waiting for these bytes, better hang up than keep them
-      debug(`no download for token ${peer.token ?? 'unknown'} from ${peer.user}, closing`)
+      debug(`no download for token ${peer.token ?? 'unknown'} from ${peer.label}, closing`)
       peer.destroy()
       return
     }
@@ -48,7 +48,7 @@ export default function createFileTransferHandler (peer: FilePeer): (data: Buffe
 
       peer.token = fileMessages.parseToken(data)
       tokenRead = true
-      debug(`${peer.user} recv FileTransferInit, token ${peer.token}`)
+      debug(`${peer.label} recv FileTransferInit, token ${peer.token}`)
       peer.resolveDownload()
       peer.sendOffset()
       onFileData(data.subarray(TOKEN_SIZE))

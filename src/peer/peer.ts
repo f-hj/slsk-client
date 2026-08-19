@@ -33,12 +33,21 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
    * Already resolved for connections a peer opened to us.
    */
   readonly ready: Promise<void>
+  /**
+   * true when the peer opened this connection to our listening port, false when we dialled it.
+   * A socket handed over by the listening server is already connected, one we just asked for
+   * is still connecting, which is the only thing telling the two apart.
+   */
+  readonly incoming: boolean
+  /** Port of the connection, kept for the log lines the socket outlives */
+  private loggedPort?: number
 
   constructor (socket: net.Socket, peer: PeerInfo, options: PeerOptions) {
     super()
     this.conn = socket
     this.peer = peer
     this.session = options.session
+    this.incoming = !socket.connecting
 
     this.ready = socket.connecting
       ? new Promise<void>((resolve, reject) => {
@@ -50,13 +59,13 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
     this.ready.catch(() => {})
 
     this.conn.on('error', (error: NodeJS.ErrnoException) => {
-      debug(`${peer.user} error ${error.code}`)
+      debug(`${this.label} error ${error.code}`)
       this.base.emit('socket-error', error)
       this.emitDisconnect()
     })
 
     this.conn.on('end', () => {
-      debug(`${peer.user} connection ended`)
+      debug(`${this.label} connection ended`)
       this.emitDisconnect()
     })
   }
@@ -64,6 +73,21 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
   /** Name of the peer on the other end */
   get user (): string {
     return this.peer.user
+  }
+
+  /**
+   * How a connection is named in the logs: the peer, and which side opened it on which port.
+   * `alice[in:2234]` reached our listening port, `alice[out:49271]` is a connection we opened
+   * to the address the server gave us. Two peers can hold both at once.
+   */
+  get label (): string {
+    // a closed socket has no port anymore, and the last lines of a connection are the ones
+    // worth reading, so it is remembered as soon as it is known
+    const port = this.incoming ? this.conn.localPort : this.conn.remotePort
+    if (port !== undefined) this.loggedPort = port
+
+    const known = this.loggedPort ?? this.peer.port
+    return `${this.peer.user}[${this.incoming ? 'in' : 'out'}:${known ?? '?'}]`
   }
 
   // the cast narrows the emitter to the base events, which every subclass map includes
@@ -86,12 +110,12 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
    * the table of the messages they carry: only the init messages are shared by every type.
    */
   protected logSent (msg: Message, detail?: string): void {
-    debug(`${this.user} send ${msg.data.length} bytes${detail ? `: ${detail}` : ''}`)
+    debug(`${this.label} send ${msg.data.length} bytes${detail ? `: ${detail}` : ''}`)
   }
 
   /** Sends an init message, whose code is a single byte, unlike the rest of a connection */
   private sendInit (msg: Message): void {
-    debug(`${this.user} send ${nameOf(INIT_MESSAGES, msg.data.readUInt8(0))}, ${msg.data.length} bytes`)
+    debug(`${this.label} send ${nameOf(INIT_MESSAGES, msg.data.readUInt8(0))}, ${msg.data.length} bytes`)
     this.conn.write(msg.getBuff())
   }
 
@@ -106,7 +130,7 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
   }
 
   setAddress (host: string, port: number): void {
-    debug(`setAddress for ${this.peer.user}: ${host} ${port}`)
+    debug(`setAddress for ${this.label}: ${host} ${port}`)
     this.peer.host = host
     this.peer.port = port
   }

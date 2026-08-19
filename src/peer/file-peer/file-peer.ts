@@ -72,7 +72,7 @@ export default class FilePeer extends Peer {
 
     if (options.handshake) {
       this.conn.once('connect', () => {
-        debug(`${this.user} file connection up, ${options.handshake}`)
+        debug(`${this.label} file connection up, ${options.handshake}`)
         if (options.handshake === 'pierce') {
           this.sendPierceFw(this.token as string)
         } else {
@@ -92,7 +92,7 @@ export default class FilePeer extends Peer {
     // a peer that stops sending mid file, or that opens a connection it then forgets about,
     // would otherwise hold the transfer forever: nothing else times a file connection out
     this.conn.setTimeout(options.transferTimeout ?? DEFAULT_TRANSFER_TIMEOUT, () => {
-      debug(`${this.user} sent nothing for too long, dropping the file connection`)
+      debug(`${this.label} sent nothing for too long, dropping the file connection`)
       this.conn.destroy()
     })
 
@@ -104,7 +104,7 @@ export default class FilePeer extends Peer {
     }
 
     this.conn.on('close', () => {
-      debug(`file socket close ${this.user}`)
+      debug(`file socket close ${this.label}`)
       const download = this.resolved
       if (!download) {
         // the uploader never announced a transfer on it: a connection it asked the server to
@@ -171,7 +171,7 @@ export default class FilePeer extends Peer {
     this.offsetSent = true
     // everything received so far, so a transfer asked for again carries on where it stopped
     const offset = this.resolveDownload()?.receivedBytes ?? 0
-    debug(`${this.user} send FileOffset ${offset}`)
+    debug(`${this.label} send FileOffset ${offset}`)
     this.conn.write(fileMessages.offset(offset))
   }
 
