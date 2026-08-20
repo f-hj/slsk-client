@@ -4,7 +4,7 @@ import ShareIndex, { type IndexedEntry } from './share-index'
 import fsShareProvider from './providers/fs'
 import type { ShareEntry, ShareProvider } from './provider'
 
-const debug = createDebug('slsk:shared:i')
+const debug = createDebug('slsk:shared')
 
 export interface SharedEvents {
   /** Emitted for every file found while listing the providers */

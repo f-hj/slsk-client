@@ -554,6 +554,34 @@ npm run coverage      # unit tests with coverage
 npm run test:integration  # integration tests against the real slsk network
 ```
 
+### Layout
+
+`src/index.ts` is the public client and little else: the options, the getters and the methods
+this README documents. The work lives next to what it acts on, and every part reaches the others
+through the `ClientContext` the client builds in [`src/context.ts`](src/context.ts).
+
+| | |debug namespace|
+|---|---|---|
+|[`server/link.ts`](src/server/link.ts)|the connection to the slsk server, the login and the reconnection loop|`slsk:server:link`|
+|[`peer/peers.ts`](src/peer/peers.ts)|every connection to another peer: the ones dialled, the ones accepted, the ones the server has a peer open|`slsk:peers`|
+|[`upload/serving.ts`](src/upload/serving.ts)|the upload queue, its slots and the files going out|`slsk:upload:serve`|
+|[`download/requesting.ts`](src/download/requesting.ts)|how a peer is asked for a file and what happens to a transfer that stops early|`slsk:download:request`|
+|[`search/searching.ts`](src/search/searching.ts)|the searches sent, and the ones answered with our shares|`slsk:search`|
+|[`share/sharing.ts`](src/share/sharing.ts)|the shared files, their listing and what the server is told about them|`slsk:share`|
+
+### Debug namespaces
+
+Every module logs under its own namespace, so `DEBUG` can be pointed at one part of the client
+instead of all of it. `DEBUG=slsk:*` turns on everything, `DEBUG=slsk:peer:*` every peer
+connection, `DEBUG=slsk:peers` only how those connections are opened and dropped.
+
+The connections split what they send from what they receive: `slsk:server` and
+`slsk:peer:default` log the messages going out, `slsk:server:recv` and `slsk:peer:default:recv`
+the ones coming in. The rest are named after the file they live in — `slsk:listen`, `slsk:peer`,
+`slsk:peer:file`, `slsk:peer:file:recv`, `slsk:peer:upload`, `slsk:peer:distributed:recv`,
+`slsk:download`, `slsk:downloads`, `slsk:upload`, `slsk:uploads`, `slsk:shared`,
+`slsk:share:index`, `slsk:share:fs` — and the test mocks log under `slsk:mock:*`.
+
 Use env variables for the integration tests (they are skipped when unset)
 - `DEBUG=slsk:*` to display debug messages
 - `SLSK_USER=MyUsername`

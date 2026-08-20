@@ -15,7 +15,7 @@ import type Shared from '../../share/shared'
 import type { PeerInfo, UserInfo, UserInfoOptions } from '../../types'
 import type { ShareEntry } from '../../share/provider'
 
-const debug = createDebug('slsk:peer:default:i')
+const debug = createDebug('slsk:peer:default')
 
 export interface DefaultPeerOptions extends PeerOptions {
   /** Shared files, used to answer share browsing and folder content requests */

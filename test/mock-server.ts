@@ -5,7 +5,7 @@ import Messages from '../src/utils/messages'
 import Message from '../src/utils/message'
 import type { ServerAddress } from '../src/types'
 
-const debug = createDebug('slsk:mock:server:i')
+const debug = createDebug('slsk:mock:server')
 
 export interface LoginEvent {
   client: net.Socket
@@ -142,6 +142,34 @@ export default class MockServer extends EventEmitter<MockServerEvents> {
   netInfo (client: net.Socket, user: string, host: string, port: number): void {
     client.write(
       netInfo(user, host, port).getBuff()
+    )
+  }
+
+  /**
+   * ConnectToPeer (18): tells the client a peer wants a connection and cannot accept one, so the
+   * client is the one that has to reach it, at the address given here and with `token`.
+   */
+  askToConnect (
+    client: net.Socket,
+    user: string,
+    type: string,
+    host: string,
+    port: number,
+    token: string
+  ): void {
+    const ip = host.split('.')
+    client.write(
+      new Message()
+        .int32(18)
+        .str(user)
+        .str(type)
+        .int8(parseInt(ip[3]))
+        .int8(parseInt(ip[2]))
+        .int8(parseInt(ip[1]))
+        .int8(parseInt(ip[0]))
+        .int32(port)
+        .rawHexStr(token)
+        .getBuff()
     )
   }
 

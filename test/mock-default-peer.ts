@@ -7,7 +7,7 @@ import Message from '../src/utils/message'
 import { parseFileSearchResult, type FileSearchResult } from '../src/peer/default-peer/messages'
 import type { ServerAddress } from '../src/types'
 
-const debug = createDebug('slsk:mock:peer:default:i')
+const debug = createDebug('slsk:mock:peer:default')
 
 /** UserInfoResponse (16), as a real peer puts it on the wire */
 function userInfoResponse (info: MockUserInfo): Buffer {

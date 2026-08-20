@@ -8,7 +8,7 @@ import { SERVER_MESSAGES, nameOf } from '../utils/message-names'
 import type Message from '../utils/message'
 import type { PeerInfo, ServerAddress } from '../types'
 
-const debug = createDebug('slsk:server:i')
+const debug = createDebug('slsk:server')
 
 /** Answer of the server to our Login */
 export type LoginResult =

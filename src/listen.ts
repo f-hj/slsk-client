@@ -4,7 +4,7 @@ import createDebug from 'debug'
 import Message from './utils/message'
 import type { PeerInfo } from './types'
 
-const debug = createDebug('slsk:listen:i')
+const debug = createDebug('slsk:listen')
 
 export interface NewPeerEvent {
   socket: net.Socket

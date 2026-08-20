@@ -27,7 +27,7 @@ Implemented in [`src/server/`](../src/server/) (receive + send helpers) and [`sr
 | 3 | GetPeerAddress (recv) | user, uint32 ip, uint32 port, uint32 obfusc. type, uint16 obfusc. port | Reads user, ip (byte-reversed correctly), port; ignores obfuscation fields | ✅ |
 | 5 | WatchUser | string username | Encoder exists (`addUser`) but is **never sent**; response (code 5) not handled | 🟡 dead code |
 | 7 | GetUserStatus (recv) | user, uint32 status, bool privileged | Reads user + status, `privileged` not read | 🟠 |
-| 18 | ConnectToPeer (recv) | user, type, ip, port, uint32 token, bool privileged, obfuscation fields | Reads through token, ignores the rest; dispatches by type P/F/D | ✅ |
+| 18 | ConnectToPeer (recv) | user, type, ip, port, uint32 token, bool privileged, obfuscation fields | Reads through token, ignores the rest; dispatches by type P/F/D. A type P request for a peer we are already connected to only records the address it carries: the peer raced a direct connection against this one, and replacing a connection that works with a dial that may never come up loses everything written until it fails | ✅ |
 | 18 | ConnectToPeer (send) | uint32 token, user, type | Sent by `connectToUser()`, which races a direct connection against a server-relayed one | ✅ |
 | 26 | FileSearch (send) | uint32 token, string query | Sends 4 raw token bytes + query; token is an opaque, self-consistent 4-byte value | ✅ |
 | 26 | FileSearch (recv) | user, token, query | Not handled — search requests are only served via the distributed parent (code D/3) | 🟡 |
@@ -124,8 +124,9 @@ The connection is kept under TCP keepalive (the protocol has no ping a client is
 
 ### 6.2 Peer connection establishment — ✅ compliant
 - **Direct outbound** (P/D after GetPeerAddress/NetInfo): compliant, though the D handshake sends *both* PeerInit and PierceFireWall on connect — the docs prescribe one or the other depending on who initiated.
-- **Indirect inbound** (server ConnectToPeer 18): compliant for P/F/D dispatch.
+- **Indirect inbound** (server ConnectToPeer 18): compliant for P/F/D dispatch. Only one peer connection per user is kept, so a relayed request for a peer that already reached us is answered on the connection it opened.
 - **Fallbacks**: `connectToUser()` races a direct connection against a server-relayed one (ConnectToPeer 18); inbound PierceFireWall tokens are matched to those pending requests, and CantConnectToPeer(1001) is reported when both attempts fail.
+- **Dials** give up after 10 s instead of waiting for the system to declare the address unreachable, which takes minutes: a peer behind a router that drops our packets would otherwise look like a peer that answers nothing, since what is written on a socket still being dialled waits in its buffer and dies with it.
 
 ### 6.3 Search (outgoing) — ✅ compliant
 FileSearch(26) → results collected from peers' FileSearchResponse(9) until the client-side timeout. Attributes are surfaced as a map keyed by their code, unknown ones included, and slotfree/avgspeed as `slots`/`speed`. Only caveat: uint64 file sizes truncated to the low 32 bits.
@@ -139,7 +140,7 @@ The client joins the distributed network as documented (HaveNoParent → NetInfo
 ### 6.5 Download — ✅ compliant with the *modern* flow, legacy fallback
 The flow is the modern one: QueueUpload(43) → PlaceInQueueRequest(51) → the peer answers with its own TransferRequest(dir 1) → TransferResponse(allowed) → F connection.
 
-Nothing in the protocol says whether a peer understands QueueUpload, and a peer that does not simply answers nothing, so a download that got no answer at all after `queueFallbackDelay` (10 s) is asked again with the legacy TransferRequest(40, dir 0). The verdict is remembered per peer connection, so only the first download from such a peer waits. A peer that answers PlaceInQueueResponse(44), QueueFailed(46) or UploadDenied(50) is known to speak the queue flow and never gets the legacy request.
+Nothing in the protocol says whether a peer understands QueueUpload, and a peer that does not simply answers nothing, so a download that got no answer at all after `queueFallbackDelay` (10 s) is asked again with the legacy TransferRequest(40, dir 0). The verdict is remembered per peer connection, so only the first download from such a peer waits. A peer that answers PlaceInQueueResponse(44), QueueFailed(46) or UploadDenied(50) is known to speak the queue flow and never gets the legacy request. Silence only counts when the connection is still up: a request that never left the buffer of a socket says nothing about the peer, so the download fails instead and the peer keeps its verdict.
 
 A refusal of the legacy request is now acted upon: TransferResponse(allowed=0) with 'Queued' marks the download queued and asks for its place, any other reason ('Queue full', 'File not shared', 'Banned'...) fails it, where it used to be logged and forgotten — leaving the download pending forever.
 

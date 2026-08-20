@@ -4,7 +4,7 @@ import type Message from '../../utils/message'
 import type DistributedPeer from './distributed-peer'
 import type { PeerSearchRequest } from '../../types'
 
-const debug = createDebug('slsk:peer:distributed:i')
+const debug = createDebug('slsk:peer:distributed:recv')
 
 /**
  * Handles a message received from a distributed parent (type D). Their code is a single byte,

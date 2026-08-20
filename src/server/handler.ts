@@ -5,7 +5,7 @@ import type Message from '../utils/message'
 import type Server from './server'
 import type { PeerInfo } from '../types'
 
-const debug = createDebug('slsk:server:i')
+const debug = createDebug('slsk:server:recv')
 
 /**
  * Handles a message received from the slsk server: answers what the protocol expects right

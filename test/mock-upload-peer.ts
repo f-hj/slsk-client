@@ -5,7 +5,7 @@ import Messages from '../src/utils/messages'
 import Message from '../src/utils/message'
 import type { ServerAddress } from '../src/types'
 
-const debug = createDebug('slsk:mock:peer:upload:i')
+const debug = createDebug('slsk:mock:peer:upload')
 
 export interface MockUploadPeerOptions {
   /** Where the mock peer accepts connections */

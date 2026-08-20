@@ -6,7 +6,7 @@ import Message from '../src/utils/message'
 import { parseUserInfo } from '../src/peer/default-peer/messages'
 import type { ServerAddress, UserInfo } from '../src/types'
 
-const debug = createDebug('slsk:mock:peer:download:i')
+const debug = createDebug('slsk:mock:peer:download')
 
 export interface MockDownloadPeerOptions {
   /** Where this peer accepts the file connection the client opens */

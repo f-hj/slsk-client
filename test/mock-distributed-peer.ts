@@ -5,7 +5,7 @@ import Messages from '../src/utils/messages'
 import Message from '../src/utils/message'
 import type { ServerAddress } from '../src/types'
 
-const debug = createDebug('slsk:mock:peer:distributed:i')
+const debug = createDebug('slsk:mock:peer:distributed')
 
 export interface PeerInitEvent {
   client: net.Socket

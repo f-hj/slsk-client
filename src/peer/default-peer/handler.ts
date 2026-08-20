@@ -5,7 +5,7 @@ import { PEER_MESSAGES, nameOf } from '../../utils/message-names'
 import type Message from '../../utils/message'
 import type DefaultPeer from './default-peer'
 
-const debug = createDebug('slsk:peer:default:i')
+const debug = createDebug('slsk:peer:default:recv')
 
 /**
  * Reason sent to a peer asking for a file of a client that shares without serving. Not one of

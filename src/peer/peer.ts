@@ -7,7 +7,7 @@ import type Message from '../utils/message'
 import type Session from '../session'
 import type { PeerInfo } from '../types'
 
-const debug = createDebug('slsk:peer:i')
+const debug = createDebug('slsk:peer')
 
 export type PeerEvents = {
   disconnect: [evt: object]
@@ -53,6 +53,8 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
       ? new Promise<void>((resolve, reject) => {
         socket.once('connect', () => resolve())
         socket.once('error', (err: Error) => reject(err))
+        // a socket destroyed before it connected emits neither, and nothing may wait forever
+        socket.once('close', () => reject(new Error(`Connection to ${peer.user} closed before it was up`)))
       })
       : Promise.resolve()
     // nobody has to await ready, the disconnect event is enough for most callers
@@ -73,6 +75,16 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
   /** Name of the peer on the other end */
   get user (): string {
     return this.peer.user
+  }
+
+  /** true while the socket is not gone: connected, or still being dialled */
+  get alive (): boolean {
+    return !this.conn.destroyed
+  }
+
+  /** true once the socket is up and still is, so what is written on it really goes out */
+  get connected (): boolean {
+    return !this.conn.connecting && !this.conn.destroyed
   }
 
   /**
@@ -101,7 +113,15 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
 
   /** Sends a message on the connection, its size prefix included */
   send (msg: Message, detail?: string): void {
+    if (this.conn.destroyed) {
+      debug(`${this.label} is gone, dropping ${msg.data.length} bytes${detail ? `: ${detail}` : ''}`)
+      return
+    }
+
     this.logSent(msg, detail)
+    // a socket still being dialled keeps what is written for later, and loses it if the dial fails
+    if (this.conn.connecting) debug(`${this.label} is not connected yet, the message waits in the buffer`)
+
     this.conn.write(msg.getBuff())
   }
 

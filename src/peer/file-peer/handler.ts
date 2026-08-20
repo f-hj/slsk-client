@@ -2,7 +2,7 @@ import createDebug from 'debug'
 import fileMessages, { TOKEN_SIZE } from './messages'
 import type FilePeer from './file-peer'
 
-const debug = createDebug('slsk:peer:file')
+const debug = createDebug('slsk:peer:file:recv')
 
 /**
  * Handles the download side of a file connection (type F). There is no framing to lean on: the
