@@ -6,7 +6,7 @@ import messages from './messages'
 import handleServerMessage from './handler'
 import { SERVER_MESSAGES, nameOf } from '../utils/message-names'
 import type Message from '../utils/message'
-import type { PeerInfo, ServerAddress } from '../types'
+import type { PeerInfo, PrivateMessage, ServerAddress } from '../types'
 
 const debug = createDebug('slsk:server')
 
@@ -25,6 +25,8 @@ export class LoginRefusedError extends Error {
 
 export interface ServerEvents {
   login: [result: LoginResult]
+  /** MessageUser (22): a private message someone sent us */
+  'private-message': [msg: PrivateMessage]
   /** Relogged (41): another client logged in with our name, this session is over */
   relogged: []
   'connect-to-peer': [peer: PeerInfo]
@@ -143,6 +145,16 @@ export default class Server extends EventEmitter<ServerEvents> {
   login (credentials: { user: string, pass: string }): void {
     // the password is never logged, only the name it is sent for
     this.write(messages.login(credentials), credentials.user)
+  }
+
+  /** MessageUser (22): sends a private message to a user */
+  messageUser (username: string, message: string): void {
+    this.write(messages.messageUser(username, message), `to ${username}: ${message.length} chars`)
+  }
+
+  /** MessageAcked (23): tells the server a private message was received */
+  messageAcked (id: number): void {
+    this.write(messages.messageAcked(id), String(id))
   }
 
   fileSearch (query: string, token: string): void {

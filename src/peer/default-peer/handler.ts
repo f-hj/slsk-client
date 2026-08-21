@@ -28,8 +28,27 @@ export default function handleDefaultPeerMessage (msg: Message, peer: DefaultPee
   if (size < 4) return
 
   const code = msg.int32()
-  debug(`${from} recv ${nameOf(PEER_MESSAGES, code)}, ${size} bytes`)
+  const name = nameOf(PEER_MESSAGES, code)
+  debug(`${from} recv ${name}, ${size} bytes`)
 
+  try {
+    handleCode(code, msg, peer, from, user, size)
+  } catch (err) {
+    // a message that does not match its documented layout, or one truncated on the wire: it
+    // must not take the connection, and the process with it, down
+    debug(`${from} cannot read ${name}: ${String(err)}`)
+  }
+}
+
+function handleCode (
+  code: number,
+  msg: Message,
+  peer: DefaultPeer,
+  from: string,
+  user: string,
+  /** Size the message announced, its code included */
+  size: number
+): void {
   switch (code) {
     case 4: {
       const files = peer.shared ? peer.shared.files : []

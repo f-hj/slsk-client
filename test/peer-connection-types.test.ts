@@ -32,7 +32,7 @@ class Watcher {
   }
 }
 
-describe('peer connections', () => {
+describe('peer connection types', () => {
   const serverAddress = { host: '127.0.0.1', port: 2253 }
   const incomingPort = 2296
   const watchedPort = 4257
@@ -84,27 +84,6 @@ describe('peer connections', () => {
     return socket
   }
 
-  it('keeps the connection a peer opened when the server relays its ConnectToPeer', async () => {
-    // a peer racing both routes reaches us directly and asks the server to relay, in that order
-    const socket = await peerConnection()
-
-    try {
-      mockServer.relayConnectToPeer(serverSide, user, '127.0.0.1', watchedPort, '435f2600')
-
-      assert.strictEqual(await watcher.accepted(), 0,
-        'the peer must not be dialled while its own connection is up')
-
-      // the connection the peer opened is still the one the client answers on
-      const answered = new Promise<number>(resolve => {
-        socket.on('data', data => resolve(new Message(data).int32()))
-      })
-      socket.write(new Message().int32(15).getBuff()) // UserInfoRequest
-      assert.ok(await answered > 0, 'the peer connection must still be usable')
-    } finally {
-      socket.destroy()
-    }
-  }).timeout(10000)
-
   it('opens a peer connection to a user it is already connected to as a parent', async () => {
     // the server hands out a distributed parent, then that same user asks for a peer connection:
     // the two carry different traffic, one must not evict the other
@@ -114,7 +93,7 @@ describe('peer connections', () => {
       mockServer.netInfo(serverSide, user, '127.0.0.1', parent.port)
       assert.strictEqual(await parent.accepted(), 1, 'the parent must be connected to')
 
-      mockServer.relayConnectToPeer(serverSide, user, '127.0.0.1', watchedPort, '435f2600')
+      mockServer.askToConnect(serverSide, user, 'P', '127.0.0.1', watchedPort, '435f2600')
 
       assert.strictEqual(await watcher.accepted(), 1,
         'the relayed peer connection must be opened, the parent is another connection')

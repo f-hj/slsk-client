@@ -18,11 +18,12 @@ You must already have a Soulseek account before using this module.
   anything else through a [share provider](#sharing)
 - Uploads: the shared files are sent to the peers that ask for them, with slots and a queue.
   Off by default, see the [`uploads` option](#serving-the-files)
+- Private messages, sent and received
 
 ### Not implemented
 
 This stuff is not implemented (yet?), but I wait your __PR__!
-- Chat
+- Chat rooms (private messages between users __are__ implemented)
 - Opening the incoming port by UPnP: it has to be reachable for a firewalled peer to be served
 - Upload priority for privileged users, per-peer rate limits and a ban list
 
@@ -363,6 +364,7 @@ Closes the connection to the server, the incoming-peer listener and every peer c
 |`peer-error`|`Error, user`|error on a peer connection|
 |`shares-ready`|`{ folders, files }`|the first share listing is over and announced|
 |`shares-error`|`Error`|the first share listing failed|
+|`private-message`|`{ id, user, message, sentAt, pending }`|somebody wrote to us. `pending` is true for a message the server had kept while we were offline|
 
 ```ts
 client.on('download-progress', ({ file, progress }) => {
@@ -375,6 +377,24 @@ when it drops, which `reconnect: false` turns off. Credentials the server refuse
 retrying them would only hammer the server: `server-error` then carries a `LoginRefusedError` and
 `server-disconnect` says `reconnecting: false`. Peer connections, searches and downloads are left
 alone while the server is unreachable, peers are connected to directly.
+
+#### sendPrivateMessage(user, message): void
+
+Writes to a user, through the slsk server: no connection to the peer is needed, and the server
+keeps the message for a user who is offline.
+
+```ts
+client.on('private-message', ({ user, message, sentAt, pending }) => {
+  console.log(`${user} wrote ${message}${pending ? ` at ${sentAt.toISOString()}` : ''}`)
+  client.sendPrivateMessage(user, 'got it')
+})
+```
+
+Every message received is acknowledged, which the protocol requires: a message left
+unacknowledged is sent again by the server, on this session and on every one that follows.
+Newlines are turned into spaces, since the server refuses a message carrying them.
+
+The user named `server` is the slsk server itself, which is how it announces things to you.
 
 ## Sharing
 

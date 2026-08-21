@@ -15,6 +15,23 @@ export interface ReconnectOptions {
   maxDelay?: number
 }
 
+/** A private message another user sent us, through the slsk server */
+export interface PrivateMessage {
+  /** Id of the message, which is what the server is told we received */
+  id: number
+  /** Who wrote it. `server` is the name the slsk server itself uses for its announcements */
+  user: string
+  /** What was written */
+  message: string
+  /**
+   * When it was sent. The server keeps the messages of a user who was offline and delivers them
+   * on the next login, which is what `pending` says.
+   */
+  sentAt: Date
+  /** true for a message that was waiting on the server, sent while we were offline */
+  pending: boolean
+}
+
 /** How the shared files are served to the peers that ask for them */
 export interface UploadOptions {
   /**

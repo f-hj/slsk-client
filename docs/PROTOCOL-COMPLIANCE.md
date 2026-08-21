@@ -29,6 +29,9 @@ Implemented in [`src/server/`](../src/server/) (receive + send helpers) and [`sr
 | 7 | GetUserStatus (recv) | user, uint32 status, bool privileged | Reads user + status, `privileged` not read | 🟠 |
 | 18 | ConnectToPeer (recv) | user, type, ip, port, uint32 token, bool privileged, obfuscation fields | Reads through token, ignores the rest; dispatches by type P/F/D. Connections are tracked per user **and** type, as nicotine keys them: a relayed request is ignored when one of that type is already up (peers race both routes, and dialling back a peer that needed a relay usually gets refused), while a request of another type is honoured — the same user can be a distributed parent and a peer we exchange files with | ✅ |
 | 18 | ConnectToPeer (send) | uint32 token, user, type | Sent by `connectToUser()`, which races a direct connection against a server-relayed one | ✅ |
+| 22 | MessageUser (recv) | uint32 id, uint32 timestamp, user, message, bool is_new | Fully parsed and reported as the `private-message` event, acknowledged with MessageAcked(23) as the protocol requires. `is_new` is surfaced as `pending`, for the messages the server kept while we were offline | ✅ |
+| 22 | MessageUser (send) | user, message | Sent by `sendPrivateMessage()`, newlines flattened since the server refuses them | ✅ |
+| 23 | MessageAcked (send) | uint32 id | Sent for every private message received, without which the server keeps redelivering it | ✅ |
 | 26 | FileSearch (send) | uint32 token, string query | Sends 4 raw token bytes + query; token is an opaque, self-consistent 4-byte value | ✅ |
 | 26 | FileSearch (recv) | user, token, query | Not handled — search requests are only served via the distributed parent (code D/3) | 🟡 |
 | 28 | SetStatus | int32 status | Sends `2` (online) after login | ✅ |
@@ -167,7 +170,11 @@ Deviations and deliberate choices:
 
 `getUserInfo(user)` asks a peer with UserInfoRequest(15) and resolves with what it answers, picture included. Incoming requests are answered from the real upload state (slots, queue size, free slot, permission), with whatever the `userInfo` client option sets on top. Note that this is the *peer* message: the server-side GetUserStats(36)/GetUserStatus(7) are still not implemented.
 
-### 6.8 Chat, rooms, interests — ❌ not implemented (declared out of scope)
+### 6.7b Private messages — ✅ both ways
+
+MessageUser(22) is parsed, reported as `private-message` and acknowledged with MessageAcked(23), which is not optional: the server redelivers an unacknowledged message on every session. `sendPrivateMessage()` sends one, and the server queues it for a user who is offline. Not implemented around them: the CTCP queries (`\x01VERSION\x01`) some clients answer, and MessageUsers(149), the broadcast to a list of users.
+
+### 6.8 Chat rooms, interests — ❌ not implemented (declared out of scope)
 
 ---
 

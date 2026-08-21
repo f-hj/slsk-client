@@ -128,6 +128,11 @@ export default class ServerLink {
       this.ctx.peers.onConnectRequest(peer)
     })
 
+    server.on('private-message', msg => {
+      debug(`${msg.user}: ${msg.message}`)
+      this.ctx.emit('private-message', msg)
+    })
+
     // the session is gone, not the connection: a new login is needed, and whatever logs in with
     // the same name has to stop first or the two keep kicking each other off
     server.on('relogged', () => {

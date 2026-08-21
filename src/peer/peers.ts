@@ -21,9 +21,18 @@ type Pierced = (socket: net.Socket, initialData?: Buffer) => void
  * One connection per peer is kept, whichever side opened it.
  */
 export default class Peers {
-  private readonly byUser: Record<string, DefaultPeer | DistributedPeer> = {}
+  /**
+   * Peer connections (type P), by user. Kept apart from the distributed ones: the protocol keys a
+   * connection by user *and* type, and the same user can hold one of each, for entirely different
+   * traffic. One map per type is what keeps a parent from evicting a peer connection.
+   */
+  private readonly peers: Record<string, DefaultPeer> = {}
+  /** Distributed connections (type D), by user: the parents that send us the searches */
+  private readonly parents: Record<string, DistributedPeer> = {}
   /** Callbacks waiting for the ConnectToPeer requests we sent, by token */
   private readonly pendingIndirect: Record<string, Pierced> = {}
+  /** Users a `connectDirect` is waiting for the address of, the only ones worth dialling */
+  private readonly awaitingAddress = new Set<string>()
   private listen?: Listen
 
   constructor (private readonly ctx: ClientContext) {}
@@ -34,7 +43,7 @@ export default class Peers {
   }
 
   get (user: string): DefaultPeer | DistributedPeer | undefined {
-    return this.byUser[user]
+    return this.peers[user] ?? this.parents[user]
   }
 
   /**
@@ -42,8 +51,15 @@ export default class Peers {
    * parent carries searches, not the messages a peer connection understands.
    */
   peerConnection (user: string): DefaultPeer | undefined {
-    const peer = this.byUser[user]
-    return peer instanceof DefaultPeer ? peer : undefined
+    return this.peers[user]
+  }
+
+  /** Every connection to a user, whatever its type: what an address applies to */
+  private connectionsTo (user: string): Array<DefaultPeer | DistributedPeer> {
+    const connections: Array<DefaultPeer | DistributedPeer> = []
+    if (this.peers[user]) connections.push(this.peers[user])
+    if (this.parents[user]) connections.push(this.parents[user])
+    return connections
   }
 
   /** Registers the connection a peer is about to open after a ConnectToPeer request */
@@ -69,10 +85,15 @@ export default class Peers {
 
     listen.on('new-peer', evt => {
       const peer = evt.peer
-      const existing = this.byUser[peer.user]
+      const existing = this.peers[peer.user]
 
       if (this.isOurOwnName(peer.user)) {
         this.dropSelfConnection(evt.socket, peer.user)
+      } else if (peer.type !== undefined && peer.type !== 'P') {
+        // the type says what travels on it, and a D connection carries messages a peer parser
+        // would read as garbage. Only P is understood: we serve no distributed children.
+        debug(`${peer.user} opened a type ${peer.type} connection, which is not served: closing it`)
+        evt.socket.destroy()
       } else if (existing?.connected) {
         debug(`already connected to ${peer.user}, dropping the connection it just opened` +
           `${evt.initialData ? ` and the ${evt.initialData.length} bytes it sent on it` : ''}`)
@@ -86,7 +107,7 @@ export default class Peers {
         }
         this.ctx.server.getPeerAddress(peer.user)
         debug(`new Peer connected ${peer.user} token ${peer.token}`)
-        this.byUser[peer.user] = this.createDefaultPeer(evt.socket, peer, evt.initialData)
+        this.peers[peer.user] = this.createDefaultPeer(evt.socket, peer, evt.initialData)
       }
     })
 
@@ -139,14 +160,28 @@ export default class Peers {
     socket.destroy()
   }
 
-  /** The address the server has for a peer: kept for the connection to it, or dialled */
+  /**
+   * The address the server has for a peer. It is recorded on every connection to that user,
+   * whatever their type, since a file connection is opened to the port it listens on and a peer
+   * connection only ever carries its ephemeral one.
+   *
+   * It is dialled only for a `connectDirect` waiting on it: an address is also answered for every
+   * peer that connects to us, and dialling those back opens connections nobody asked for — to
+   * peers that often cannot accept one anyway.
+   */
   onAddress (peer: PeerInfo): void {
-    const existing = this.byUser[peer.user]
-    if (existing) {
-      existing.setAddress(peer.host as string, peer.port as number)
+    const known = this.connectionsTo(peer.user)
+    known.forEach(connection => connection.setAddress(peer.host as string, peer.port as number))
+
+    if (!this.awaitingAddress.has(peer.user)) {
+      if (known.length === 0) {
+        debug(`${peer.user} is at ${peer.host}:${peer.port}, nothing is waiting for it`)
+      }
       return
     }
-    this.byUser[peer.user] = this.createDefaultPeer(
+    if (this.peers[peer.user]) return
+
+    this.peers[peer.user] = this.createDefaultPeer(
       this.dialPeer(peer.host as string, peer.port as number),
       peer
     )
@@ -188,7 +223,13 @@ export default class Peers {
         break
       }
       case 'D': {
-        this.byUser[peer.user] = this.createDistributedPeer(peer)
+        // a parent of a user we also talk to as a peer: both connections are kept
+        const parent = this.parents[peer.user]
+        if (parent) {
+          debug(`replacing the distributed connection to ${peer.user}`)
+          parent.destroy()
+        }
+        this.parents[peer.user] = this.createDistributedPeer(peer)
         break
       }
       default: {
@@ -205,7 +246,7 @@ export default class Peers {
           return
         }
 
-        this.byUser[peer.user] = this.createDefaultPeer(
+        this.peers[peer.user] = this.createDefaultPeer(
           this.dialPeer(peer.host as string, peer.port as number),
           peer
         )
@@ -231,7 +272,7 @@ export default class Peers {
 
     defaultPeer.on('socket-error', err => this.ctx.emit('peer-error', err, peer.user))
     defaultPeer.on('disconnect', () => {
-      if (this.byUser[peer.user] === defaultPeer) delete this.byUser[peer.user]
+      if (this.peers[peer.user] === defaultPeer) delete this.peers[peer.user]
     })
 
     defaultPeer.on('search-result', result => searching.onResult(result))
@@ -294,7 +335,7 @@ export default class Peers {
       this.ctx.server.branchRoot(root)
     })
     distributedPeer.on('disconnect', () => {
-      if (this.byUser[peer.user] === distributedPeer) delete this.byUser[peer.user]
+      if (this.parents[peer.user] === distributedPeer) delete this.parents[peer.user]
       this.ctx.server.haveNoParents(true)
     })
 
@@ -306,11 +347,8 @@ export default class Peers {
    * indirectly by asking the server to make the peer connect to us. Resolves with the peer
    * connection that answered first, rejects when none did before `timeout` ms.
    */
-  async connectToUser (
-    user: string,
-    timeout = PEER_TIMEOUT
-  ): Promise<DefaultPeer | DistributedPeer> {
-    const existing = this.byUser[user]
+  async connectToUser (user: string, timeout = PEER_TIMEOUT): Promise<DefaultPeer> {
+    const existing = this.peers[user]
     if (existing) {
       try {
         // a connection we opened may still be being dialled, nothing reaches the peer until it is up
@@ -338,23 +376,28 @@ export default class Peers {
   }
 
   /** Asks the server for the address of the peer and connects to it */
-  private async connectDirect (
-    user: string,
-    timeout: number
-  ): Promise<DefaultPeer | DistributedPeer> {
+  private async connectDirect (user: string, timeout: number): Promise<DefaultPeer> {
     const answer = waitFor(this.ctx.server, 'get-peer-address', {
       timeout,
       timeoutError: new Error(`GetPeerAddress timed out for ${user}`),
       match: peer => peer.user === user
     })
-    this.ctx.server.getPeerAddress(user)
+    // what tells `onAddress` this address was asked for, and is worth dialling
+    this.awaitingAddress.add(user)
 
-    const [address] = await answer
+    let address
+    try {
+      this.ctx.server.getPeerAddress(user)
+      ;[address] = await answer
+    } finally {
+      this.awaitingAddress.delete(user)
+    }
+
     // the slsk server answers port 0 for a user that is not connected
     if (!address.port) throw new Error(`${user} is not connected`)
 
     // onAddress created the peer with the address we just received
-    const peer = this.byUser[user]
+    const peer = this.peers[user]
     if (!peer) throw new Error(`No connection to ${user}`)
     await peer.ready
     return peer
@@ -365,13 +408,13 @@ export default class Peers {
     user: string,
     token: string,
     timeout: number
-  ): Promise<DefaultPeer | DistributedPeer> {
+  ): Promise<DefaultPeer> {
     const pierced = new Promise<DefaultPeer>(resolve => {
       // the peer pierces our firewall on the listening port
       this.expectPierce(token, (socket, initialData) => {
         debug(`${user} pierced our firewall with token ${token}`)
         const peer = this.createDefaultPeer(socket, { user, type: 'P' }, initialData)
-        this.byUser[user] = peer
+        this.peers[user] = peer
         resolve(peer)
       })
     })
@@ -379,10 +422,11 @@ export default class Peers {
     const relayed = waitFor(this.ctx.server, 'connect-to-peer', {
       timeout,
       timeoutError: new Error(`ConnectToPeer timed out for ${user}`),
-      match: peer => peer.user === user && peer.type !== 'F'
+      // a relayed F or D request is another connection entirely, not the one being waited for
+      match: peer => peer.user === user && peer.type !== 'F' && peer.type !== 'D'
     }).then(() => {
       // onConnectRequest connected to the peer
-      const peer = this.byUser[user]
+      const peer = this.peers[user]
       if (!peer) throw new Error(`No connection to ${user}`)
       return peer
     })
@@ -395,8 +439,7 @@ export default class Peers {
   /** Closes every connection, the listening server included */
   destroy (): void {
     this.listen?.destroy()
-    Object.keys(this.byUser).forEach(user => {
-      this.byUser[user].destroy()
-    })
+    Object.values(this.peers).forEach(peer => peer.destroy())
+    Object.values(this.parents).forEach(parent => parent.destroy())
   }
 }

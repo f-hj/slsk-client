@@ -1,5 +1,6 @@
 import type {
   DownloadProgress,
+  PrivateMessage,
   QueuePlace,
   SearchResult,
   UploadProgress
@@ -29,6 +30,8 @@ export type SlskClientEvents = {
   'upload-complete': [evt: { user: string, file: string, sentBytes: number }]
   /** A file could not be sent, the peer has been told */
   'upload-failed': [evt: { user: string, file: string, error: Error }]
+  /** A private message another user sent us */
+  'private-message': [msg: PrivateMessage]
   /** Error on the connection to the slsk server */
   'server-error': [err: Error]
   /**

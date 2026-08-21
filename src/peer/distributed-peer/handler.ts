@@ -21,7 +21,14 @@ export default function handleDistributedPeerMessage (msg: Message, peer: Distri
   if (!isSearch(code)) {
     debug(`${peer.label} recv ${nameOf(DISTRIBUTED_MESSAGES, code)}, ${size} bytes`)
   }
-  handleCode(code, msg, peer)
+
+  try {
+    handleCode(code, msg, peer)
+  } catch (err) {
+    // a message that does not match its documented layout, or one truncated on the wire: it
+    // must not take the connection, and the process with it, down
+    debug(`${peer.label} cannot read ${nameOf(DISTRIBUTED_MESSAGES, code)}: ${String(err)}`)
+  }
 }
 
 /** true for the messages carrying a search, directly or embedded by our branch root */

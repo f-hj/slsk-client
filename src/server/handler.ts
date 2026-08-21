@@ -17,8 +17,19 @@ export default function handleServerMessage (msg: Message, server: Server): void
   if (size < 4) return
 
   const code = msg.int32()
-  debug(`recv ${nameOf(SERVER_MESSAGES, code)}, ${size} bytes`)
+  const name = nameOf(SERVER_MESSAGES, code)
+  debug(`recv ${name}, ${size} bytes`)
 
+  try {
+    handleCode(code, msg, server, name)
+  } catch (err) {
+    // a message that does not match its documented layout, or one truncated on the wire: it
+    // must not take the connection, and the process with it, down
+    debug(`cannot read ${name}: ${String(err)}`)
+  }
+}
+
+function handleCode (code: number, msg: Message, server: Server, name: string): void {
   switch (code) {
     case 1: {
       const success = msg.int8()
@@ -47,6 +58,27 @@ export default function handleServerMessage (msg: Message, server: Server): void
       const status = msg.int32()
       const privileged = msg.remaining() >= 1 ? msg.int8() : 0
       debug(`${user} is ${status}, privileged: ${privileged}`)
+      break
+    }
+    case 22: {
+      const id = msg.int32()
+      // seconds since the epoch, and only meaningful for a message that waited on the server
+      const timestamp = msg.int32()
+      const user = msg.str()
+      const message = msg.str()
+      // the flag is 1 for a message sent to us just now, 0 for one the server had kept
+      const pending = msg.remaining() >= 1 ? msg.int8() === 0 : false
+
+      debug(`private message ${id} from ${user}${pending ? ' (kept by the server)' : ''}`)
+      // without the ack the server sends the same message again, on every session
+      server.messageAcked(id)
+      server.emit('private-message', {
+        id,
+        user,
+        message,
+        sentAt: new Date(timestamp * 1000),
+        pending
+      })
       break
     }
     case 18: {
@@ -146,7 +178,7 @@ export default function handleServerMessage (msg: Message, server: Server): void
       break
     }
     default: {
-      debug(`nothing is done with ${nameOf(SERVER_MESSAGES, code)}`)
+      debug(`nothing is done with ${name}`)
     }
   }
 }

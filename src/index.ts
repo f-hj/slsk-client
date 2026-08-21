@@ -2,7 +2,6 @@ import EventEmitter from 'events'
 import { LoginRefusedError } from './server/server'
 import ServerLink from './server/link'
 import DefaultPeer from './peer/default-peer/default-peer'
-import DistributedPeer from './peer/distributed-peer/distributed-peer'
 import Peers from './peer/peers'
 import Shared from './share/shared'
 import ShareIndex from './share/share-index'
@@ -218,14 +217,22 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
   }
 
   /**
+   * Sends a private message to a user, through the slsk server: no connection to the peer is
+   * needed, and the server keeps it for a user who is offline. Their answers arrive as
+   * `private-message` events.
+   *
+   * The server refuses a message carrying newlines, so they are turned into spaces.
+   */
+  sendPrivateMessage (user: string, message: string): void {
+    this.link.server.messageUser(user, message.replace(/\r/g, '').replace(/\n/g, ' '))
+  }
+
+  /**
    * Connects to a peer, directly using the address given by the server and, at the same time,
    * indirectly by asking the server to make the peer connect to us. Resolves with the peer
    * connection that answered first, rejects when none did before `timeout` ms.
    */
-  async connectToUser (
-    user: string,
-    timeout = PEER_TIMEOUT
-  ): Promise<DefaultPeer | DistributedPeer> {
+  async connectToUser (user: string, timeout = PEER_TIMEOUT): Promise<DefaultPeer> {
     return await this.peers.connectToUser(user, timeout)
   }
 
@@ -236,9 +243,6 @@ export class SlskClient extends EventEmitter<SlskClientEvents> {
    */
   async getUserInfo (user: string, timeout = USER_INFO_TIMEOUT): Promise<UserInfo> {
     const connection = await this.peers.connectToUser(user)
-    if (!(connection instanceof DefaultPeer)) {
-      throw new Error(`No peer connection to ${user}`)
-    }
 
     // the listener must be registered before the request is sent
     const answer = waitFor(connection, 'user-info', {

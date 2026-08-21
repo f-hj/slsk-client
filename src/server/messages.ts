@@ -39,6 +39,22 @@ const serverMessages = {
       .str(username)
       .str(type)
   },
+  /** MessageUser (22): a private message sent to another user */
+  messageUser: (username: string, message: string): Message => {
+    return new Message()
+      .int32(22)
+      .str(username)
+      .str(message)
+  },
+  /**
+   * MessageAcked (23): confirms a private message was received. Without it the server keeps
+   * sending the same message, on this session and on every one that follows.
+   */
+  messageAcked: (id: number): Message => {
+    return new Message()
+      .int32(23)
+      .int32(id)
+  },
   /** FileSearch (26) */
   fileSearch: (query: string, token: string): Message => {
     return new Message()
