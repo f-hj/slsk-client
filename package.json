@@ -21,7 +21,10 @@
   },
   "author": "Florian Hermouet-Joscht",
   "license": "MIT",
-  "repository": "f-hj/slsk-client",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f-hj/slsk-client.git"
+  },
   "keywords": [
     "slsk",
     "soulseek",

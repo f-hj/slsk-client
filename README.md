@@ -608,6 +608,18 @@ the ones coming in. The rest are named after the file they live in — `slsk:lis
 `slsk:download`, `slsk:downloads`, `slsk:upload`, `slsk:uploads`, `slsk:shared`,
 `slsk:share:index`, `slsk:share:fs` — and the test mocks log under `slsk:mock:*`.
 
+Every line about a peer starts with the connection it is about, `user[in|out:port]`: `in` for a
+connection the peer opened to our listening port, `out` for one we dialled, and the port so the
+two connections a peer often holds at once stay apart. `?` stands for something not known yet —
+the name of a peer that has not introduced itself, or a port a socket no longer has.
+
+```
+slsk:peer:default:recv jambon[in:2295] recv QueueUpload(43), 28 bytes
+slsk:upload:serve      jambon[in:2295] accepted music\great song.mp3, opening the file connection
+slsk:peer:upload       jambon[out:4256] send FileTransferInit, token 4cd15f12
+slsk:peer:upload       jambon[out:4256] sent 36/36 bytes
+```
+
 Use env variables for the integration tests (they are skipped when unset)
 - `DEBUG=slsk:*` to display debug messages
 - `SLSK_USER=MyUsername`

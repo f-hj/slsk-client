@@ -104,12 +104,12 @@ export default class FilePeer extends Peer {
     }
 
     this.conn.on('close', () => {
-      debug(`file socket close ${this.label}`)
+      debug(`${this.label} file connection closed`)
       const download = this.resolved
       if (!download) {
         // the uploader never announced a transfer on it: a connection it asked the server to
         // relay and then did not need, nothing was waiting for it
-        debug(`no transfer was announced on this connection (${this.token ?? 'no token'})`)
+        debug(`${this.label} no transfer was announced on it (${this.token ?? 'no token'})`)
         return
       }
       if (download.isSettled) return
@@ -125,7 +125,7 @@ export default class FilePeer extends Peer {
 
   /** Opens a file connection to a peer to download a file */
   static open (options: OpenFilePeerOptions): FilePeer {
-    debug(`open file connection to ${options.user}`)
+    debug(`${options.user}[out:${options.port}] open file connection`)
     const conn = net.createConnection({ host: options.host, port: options.port })
 
     const peer = new FilePeer(conn, {
@@ -141,7 +141,7 @@ export default class FilePeer extends Peer {
     })
 
     peer.ready.catch(() => {
-      debug(`file socket never came up ${options.user}`)
+      debug(`${options.user}[out:${options.port}] file connection never came up`)
       peer.download?.fail(new Error(`Cannot connect to ${options.user}`))
     })
 
@@ -165,7 +165,7 @@ export default class FilePeer extends Peer {
   sendOffset (): void {
     if (this.offsetSent) return
     if (this.conn.destroyed) {
-      debug('socket closed before the offset could be sent')
+      debug(`${this.label} closed before the offset could be sent`)
       return
     }
     this.offsetSent = true

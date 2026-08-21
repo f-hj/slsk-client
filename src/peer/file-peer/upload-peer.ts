@@ -78,14 +78,14 @@ export default class UploadPeer extends Peer {
     }
 
     this.conn.on('close', () => {
-      debug(`file socket close ${this.label}`)
+      debug(`${this.label} file connection closed`)
       this.stream?.destroy()
       if (this.upload.isSettled) return
 
       if (!this.established) {
         // a connection that never came up leaves the transfer alone: whoever opened it still has
         // the server-relayed route to try
-        debug(`${this.user} could not be reached on this connection`)
+        debug(`${this.label} could not be reached on this connection`)
         return
       }
 
@@ -106,7 +106,7 @@ export default class UploadPeer extends Peer {
    * server-relayed route to try.
    */
   static open (options: OpenUploadPeerOptions): UploadPeer {
-    debug(`open file connection to ${options.upload.user}`)
+    debug(`${options.upload.user}[out:${options.port}] open file connection`)
     const conn = net.createConnection({ host: options.host, port: options.port })
 
     return new UploadPeer(conn, {

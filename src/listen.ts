@@ -6,6 +6,14 @@ import type { PeerInfo } from './types'
 
 const debug = createDebug('slsk:listen')
 
+/**
+ * Names an incoming connection the way {@link Peer.label} does, so a line written before the
+ * peer introduced itself sits next to the ones written after it. `?` until it gives its name.
+ */
+function incoming (socket: net.Socket, user = '?'): string {
+  return `${user}[in:${socket.localPort ?? '?'}]`
+}
+
 export interface NewPeerEvent {
   socket: net.Socket
   peer: PeerInfo
@@ -46,12 +54,12 @@ export default class Listen extends EventEmitter<ListenEvents> {
     this.server = net.createServer(c => this.handleConnection(c))
 
     this.server.on('error', err => {
-      debug(`Listen Server Error ${err}`)
+      debug(`listening server error ${err.message}`)
       this.emit('socket-error', err)
     })
 
     this.server.listen(this.port, '0.0.0.0', () => {
-      debug(`Listen peer connections on port ${this.port}`)
+      debug(`listening for peer connections on port ${this.port}`)
     })
   }
 
@@ -64,7 +72,7 @@ export default class Listen extends EventEmitter<ListenEvents> {
     let buf = Buffer.alloc(0)
 
     const onError = (err: NodeJS.ErrnoException): void => {
-      debug(`listen connection error ${err.code}`)
+      debug(`${incoming(c)} connection error ${err.code ?? err.message}`)
       this.emit('socket-error', err)
     }
 
@@ -88,15 +96,18 @@ export default class Listen extends EventEmitter<ListenEvents> {
       c.pause()
       c.removeListener('data', onData)
       c.removeListener('error', onError)
+      // whoever took the connection logs its end from now on, with the name of the peer on it
+      c.removeListener('end', onEnd)
       c.resume()
+    }
+
+    const onEnd = (): void => {
+      debug(`${incoming(c)} connection ended before it said what it was for`)
     }
 
     c.on('data', onData)
     c.on('error', onError)
-
-    c.on('end', () => {
-      debug('client disconnected')
-    })
+    c.on('end', onEnd)
   }
 
   /** Returns true when the socket has been handed over to a peer or a file transfer */
@@ -105,7 +116,7 @@ export default class Listen extends EventEmitter<ListenEvents> {
     switch (code) {
       case 0: {
         const token = msg.rawHexStr(4)
-        debug(`recv Pierce Firewall, token: ${token}`)
+        debug(`${incoming(c)} recv PierceFireWall, token ${token}`)
         this.emit('pierce-firewall', { socket: c, token, initialData })
         return true
       }
@@ -113,7 +124,7 @@ export default class Listen extends EventEmitter<ListenEvents> {
         const user = msg.str()
         const type = msg.str()
         const token = msg.remaining() >= 4 ? msg.rawHexStr(4) : '00000000'
-        debug(`peerInit ${user}, type ${type}, token ${token}`)
+        debug(`${incoming(c, user)} recv PeerInit, type ${type} token ${token}`)
 
         if (type === 'F') {
           // a peer is about to send us a file it queued for upload
@@ -129,13 +140,13 @@ export default class Listen extends EventEmitter<ListenEvents> {
         return true
       }
       default: {
-        debug(`unattended case, peer init code ${code}`)
+        debug(`${incoming(c)} unattended peer init code ${code}`)
         return false
       }
     }
   }
 
   destroy (): void {
-    if (this.server) this.server.close(() => debug('Listen peer connections server closed'))
+    if (this.server) this.server.close(() => debug('stopped listening for peer connections'))
   }
 }

@@ -61,7 +61,7 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
     this.ready.catch(() => {})
 
     this.conn.on('error', (error: NodeJS.ErrnoException) => {
-      debug(`${this.label} error ${error.code}`)
+      debug(`${this.label} error ${error.code ?? error.message}`)
       this.base.emit('socket-error', error)
       this.emitDisconnect()
     })
@@ -150,7 +150,7 @@ export default class Peer<Events extends Record<string, any[]> = Record<never, n
   }
 
   setAddress (host: string, port: number): void {
-    debug(`setAddress for ${this.label}: ${host} ${port}`)
+    debug(`${this.label} listens on ${host}:${port}`)
     this.peer.host = host
     this.peer.port = port
   }

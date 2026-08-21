@@ -57,20 +57,20 @@ export default class Serving {
     const uploads = this.ctx.session.uploads
     const running = uploads.get(peer.user, file)
     if (running) {
-      debug(`${peer.user} asks again for ${file}, already ${running.status}`)
+      debug(`${peer.label} asks again for ${file}, already ${running.status}`)
       return
     }
 
     // resolved against the index, so a crafted path cannot reach anything we do not share
     const indexed = this.ctx.sharing.shared.resolve(file)
     if (!indexed) {
-      debug(`${peer.user} wants ${file}, which is not shared`)
+      debug(`${peer.label} wants ${file}, which is not shared`)
       peer.uploadDenied(file, 'File not shared.')
       return
     }
 
     if (uploads.waitingFor(peer.user) >= config.queueLimit) {
-      debug(`${peer.user} has ${config.queueLimit} files waiting already`)
+      debug(`${peer.label} has ${config.queueLimit} files waiting already`)
       peer.uploadDenied(file, 'Too many files')
       return
     }
@@ -103,7 +103,7 @@ export default class Serving {
     const uploads = this.ctx.session.uploads
     const upload = uploads.get(peer.user, file)
     if (!upload) {
-      debug(`${peer.user} asks its place for ${file}, which is not queued`)
+      debug(`${peer.label} asks its place for ${file}, which is not queued`)
       return
     }
     peer.placeInQueueResponse(file, uploads.placeInQueue(upload))
@@ -117,12 +117,12 @@ export default class Serving {
    */
   requestedByPeer (peer: DefaultPeer, evt: { token: string, file: string }): void {
     if (!this.ctx.servesUploads) {
-      debug(`${peer.user} asks to download ${evt.file}, uploads are disabled`)
+      debug(`${peer.label} asks to download ${evt.file}, uploads are disabled`)
       peer.transferResponse(evt.token, false, UPLOADS_DISABLED)
       return
     }
 
-    debug(`${peer.user} asks to download ${evt.file} the old way, queueing it`)
+    debug(`${peer.label} asks to download ${evt.file} the old way, queueing it`)
     peer.transferResponse(evt.token, false, 'Queued')
     void this.queue(peer, evt.file)
   }
@@ -139,12 +139,12 @@ export default class Serving {
   ): void {
     if (!evt.allowed) {
       const reason = evt.reason ?? ''
-      debug(`${peer.user} refused ${upload.file}: ${reason || 'no reason'}`)
+      debug(`${peer.label} refused ${upload.file}: ${reason || 'no reason'}`)
       upload.fail(new Error(`${peer.user} refused the file: ${reason || 'no reason'}`))
       return
     }
 
-    debug(`${peer.user} accepted ${upload.file}, opening the file connection`)
+    debug(`${peer.label} accepted ${upload.file}, opening the file connection`)
     this.start(peer, upload)
       .catch((err: Error) => upload.fail(err))
   }
@@ -226,7 +226,7 @@ export default class Serving {
         await connection.ready
         return
       } catch (err) {
-        debug(`cannot open a file connection to ${upload.user}: ${String(err)}`)
+        debug(`${connection.label} cannot be opened: ${String(err)}`)
         connection.destroy()
       }
     }
@@ -260,7 +260,7 @@ export default class Serving {
       if (!address.port || !address.host) return undefined
       return { host: address.host, port: address.port }
     } catch (err) {
-      debug(`no address for ${user}: ${String(err)}`)
+      debug(`${peer.label} has no address to open a file connection to: ${String(err)}`)
       return undefined
     }
   }

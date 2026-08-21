@@ -20,18 +20,18 @@ export default function createFileTransferHandler (peer: FilePeer): (data: Buffe
     const download = peer.resolveDownload()
     if (!download) {
       // nothing is waiting for these bytes, better hang up than keep them
-      debug(`no download for token ${peer.token ?? 'unknown'} from ${peer.label}, closing`)
+      debug(`${peer.label} no download for token ${peer.token ?? 'unknown'}, closing`)
       peer.destroy()
       return
     }
 
     const complete = download.push(data)
     if (dataEvents++ % 10 === 0) {
-      debug(`received: ${download.receivedBytes} size: ${download.size ?? 'unknown'}`)
+      debug(`${peer.label} received ${download.receivedBytes}/${download.size ?? 'unknown'} bytes of ${download.file}`)
     }
 
     if (complete) {
-      debug(`disconnect, received: ${download.receivedBytes} size: ${download.size ?? 0}`)
+      debug(`${peer.label} received ${download.receivedBytes}/${download.size ?? 0} bytes of ${download.file}, done`)
       peer.end()
     }
   }

@@ -132,12 +132,12 @@ export default class Requesting {
       // silence on a connection that is gone says nothing about what the peer understands, and
       // remembering it as a peer to never ask the modern way again would be wrong
       if (!peer.connected) {
-        debug(`${peer.user} never answered about its queue, its connection is gone`)
+        debug(`${peer.label} never answered about its queue, its connection is gone`)
         download.fail(new Error(`Lost the connection to ${peer.user}`))
         return
       }
 
-      debug(`${peer.user} answered nothing about its queue, asking the old way`)
+      debug(`${peer.label} answered nothing about its queue, asking the old way`)
       peer.supportsQueue = false
       this.legacyRequest(peer, download)
     }, delay)
@@ -162,7 +162,7 @@ export default class Requesting {
     const downloads = this.ctx.session.downloads
     const download = downloads.get(peer.user, evt.file)
     if (!download) {
-      debug(`${peer.user} announces ${evt.file}, which we did not ask for`)
+      debug(`${peer.label} announces ${evt.file}, which we did not ask for`)
       peer.transferResponse(evt.token, false, 'Cancelled')
       return
     }
@@ -187,7 +187,7 @@ export default class Requesting {
 
       if (isQueuedReason(reason)) {
         // the peer will announce the transfer with its own token once a slot frees
-        debug(`${peer.user} queued ${download?.file ?? evt.token}`)
+        debug(`${peer.label} queued ${download?.file ?? evt.token}`)
         if (download) {
           download.setStatus('queued')
           // pointless towards a peer that already ignored a place request
@@ -196,13 +196,13 @@ export default class Requesting {
         return
       }
 
-      debug(`${peer.user} refused the transfer: ${reason || 'no reason'}`)
+      debug(`${peer.label} refused the transfer: ${reason || 'no reason'}`)
       download?.fail(new Error(reason || 'Transfer refused'))
       return
     }
 
     if (!download) {
-      debug(`${peer.user} allowed the unknown transfer ${evt.token}`)
+      debug(`${peer.label} allowed the unknown transfer ${evt.token}`)
       return
     }
 
@@ -212,7 +212,7 @@ export default class Requesting {
       return
     }
 
-    debug(`Directly allowed. Connecting to ${peer.user} with PeerInit + ${evt.token}`)
+    debug(`${peer.label} allowed the transfer, opening a file connection with PeerInit + ${evt.token}`)
     FilePeer.open({
       host: peer.peer.host,
       port: peer.peer.port,

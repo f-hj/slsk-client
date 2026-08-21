@@ -16,6 +16,20 @@ const debug = createDebug('slsk:peers')
 type Pierced = (socket: net.Socket, initialData?: Buffer) => void
 
 /**
+ * Names an incoming connection the way {@link Peer.label} does, for the log lines written before
+ * it is wrapped in a `Peer`: every line about a connection says which peer and which side of it.
+ * `?` for a peer that has not introduced itself, which a PierceFireWall never does.
+ */
+function inLabel (user: string, socket: net.Socket): string {
+  return `${user}[in:${socket.localPort ?? '?'}]`
+}
+
+/** Same, for a connection we are about to dial: the port is the one the peer listens on */
+function outLabel (user: string, port?: number): string {
+  return `${user}[out:${port ?? '?'}]`
+}
+
+/**
  * Every connection this client holds to another peer, and how they come to be: the ones we dial,
  * the ones peers open to our listening port, and the ones the server has a peer open for us.
  * One connection per peer is kept, whichever side opened it.
@@ -92,21 +106,22 @@ export default class Peers {
       } else if (peer.type !== undefined && peer.type !== 'P') {
         // the type says what travels on it, and a D connection carries messages a peer parser
         // would read as garbage. Only P is understood: we serve no distributed children.
-        debug(`${peer.user} opened a type ${peer.type} connection, which is not served: closing it`)
+        debug(`${inLabel(peer.user, evt.socket)} opened a type ${peer.type} connection, which is not served: closing it`)
         evt.socket.destroy()
       } else if (existing?.connected) {
-        debug(`already connected to ${peer.user}, dropping the connection it just opened` +
+        debug(`${inLabel(peer.user, evt.socket)} is already connected on ${existing.label},` +
+          ` dropping the connection it just opened` +
           `${evt.initialData ? ` and the ${evt.initialData.length} bytes it sent on it` : ''}`)
         evt.socket.destroy()
       } else {
         // a peer reaching us while we are still dialling it, or after that dial died: its
         // connection is the one that works, ours would only hold messages in a buffer
         if (existing) {
-          debug(`${peer.user} reached us, dropping ${existing.label}`)
+          debug(`${inLabel(peer.user, evt.socket)} reached us, dropping ${existing.label}`)
           existing.destroy()
         }
         this.ctx.server.getPeerAddress(peer.user)
-        debug(`new Peer connected ${peer.user} token ${peer.token}`)
+        debug(`${inLabel(peer.user, evt.socket)} new peer connection, token ${peer.token}`)
         this.peers[peer.user] = this.createDefaultPeer(evt.socket, peer, evt.initialData)
       }
     })
@@ -117,7 +132,7 @@ export default class Peers {
         this.dropSelfConnection(evt.socket, evt.user)
         return
       }
-      debug(`incoming file transfer from ${evt.user}`)
+      debug(`${inLabel(evt.user, evt.socket)} incoming file transfer`)
       new FilePeer(evt.socket, { user: evt.user, type: 'F' }, {
         session: this.ctx.session,
         readToken: true,
@@ -130,7 +145,7 @@ export default class Peers {
     listen.on('pierce-firewall', evt => {
       const pending = this.pendingIndirect[evt.token]
       if (!pending) {
-        debug(`unexpected PierceFirewall token ${evt.token}, closing`)
+        debug(`${inLabel('?', evt.socket)} unexpected PierceFireWall token ${evt.token}, closing`)
         evt.socket.destroy()
         return
       }
@@ -156,7 +171,7 @@ export default class Peers {
    * or a download would then be sent to ourselves instead of to the peer that asked.
    */
   private dropSelfConnection (socket: net.Socket, user: string): void {
-    debug(`a connection introduced itself as ${user}, which is the name we logged in as: closing it`)
+    debug(`${inLabel(user, socket)} introduced itself with the name we logged in as: closing it`)
     socket.destroy()
   }
 
@@ -175,7 +190,7 @@ export default class Peers {
 
     if (!this.awaitingAddress.has(peer.user)) {
       if (known.length === 0) {
-        debug(`${peer.user} is at ${peer.host}:${peer.port}, nothing is waiting for it`)
+        debug(`${outLabel(peer.user, peer.port)} is at ${peer.host}, nothing is waiting for its address`)
       }
       return
     }
@@ -205,7 +220,8 @@ export default class Peers {
 
   /** A peer asked the server to have us connect to it, because it cannot accept a connection */
   onConnectRequest (peer: PeerInfo): void {
-    debug(`connectToPeer ${peer.user} ${peer.host} ${peer.port} ${peer.token} ${peer.type}`)
+    debug(`${outLabel(peer.user, peer.port)} asked the server to have us connect,` +
+      ` type ${peer.type} token ${peer.token} at ${peer.host}`)
 
     switch (peer.type) {
       case 'F': {
@@ -226,7 +242,7 @@ export default class Peers {
         // a parent of a user we also talk to as a peer: both connections are kept
         const parent = this.parents[peer.user]
         if (parent) {
-          debug(`replacing the distributed connection to ${peer.user}`)
+          debug(`${parent.label} replaced by a new distributed connection`)
           parent.destroy()
         }
         this.parents[peer.user] = this.createDistributedPeer(peer)
@@ -241,7 +257,7 @@ export default class Peers {
          */
         const existing = this.peerConnection(peer.user)
         if (existing?.alive) {
-          debug(`already connected to ${peer.user}, keeping ${existing.label}`)
+          debug(`${existing.label} is already connected, keeping it`)
           if (peer.host && peer.port) existing.setAddress(peer.host, peer.port)
           return
         }
@@ -304,7 +320,7 @@ export default class Peers {
     // a peer asking for one of our files, only reported when this client serves them
     defaultPeer.on('queue-upload', file => {
       serving.queue(defaultPeer, file)
-        .catch((err: Error) => debug(`cannot queue ${file} for ${peer.user}: ${err.message}`))
+        .catch((err: Error) => debug(`${defaultPeer.label} cannot queue ${file}: ${err.message}`))
     })
     defaultPeer.on('place-in-queue-request', file => {
       serving.placeRequested(defaultPeer, file)
@@ -324,7 +340,7 @@ export default class Peers {
     distributedPeer.on('socket-error', err => this.ctx.emit('peer-error', err, peer.user))
     distributedPeer.on('search', search => {
       this.ctx.searching.answerRequest(search.user, search.ticket, search.query)
-        .catch(err => debug(`cannot answer the search of ${search.user}: ${String(err)}`))
+        .catch(err => debug(`${distributedPeer.label} cannot answer the search of ${search.user}: ${String(err)}`))
     })
     distributedPeer.on('branch-level', level => {
       // we have a parent, tell the server where we sit in the distributed network
@@ -356,7 +372,7 @@ export default class Peers {
         return existing
       } catch {
         // that dial never came up, and its disconnect dropped it from the map: connect again
-        debug(`the connection to ${user} never came up, connecting again`)
+        debug(`${existing.label} never came up, connecting again`)
       }
     }
 
@@ -412,7 +428,7 @@ export default class Peers {
     const pierced = new Promise<DefaultPeer>(resolve => {
       // the peer pierces our firewall on the listening port
       this.expectPierce(token, (socket, initialData) => {
-        debug(`${user} pierced our firewall with token ${token}`)
+        debug(`${inLabel(user, socket)} pierced our firewall with token ${token}`)
         const peer = this.createDefaultPeer(socket, { user, type: 'P' }, initialData)
         this.peers[user] = peer
         resolve(peer)
