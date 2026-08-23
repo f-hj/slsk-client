@@ -88,7 +88,11 @@ export default class Download extends EventEmitter<DownloadEvents> implements Pr
   status: DownloadStatus = 'requested'
   readonly [Symbol.toStringTag] = 'Download'
 
-  private data = Buffer.alloc(0)
+  // chunks as received, concatenated once in end(): a per-chunk concat
+  // re-copies everything received so far, which is quadratic and stalls
+  // the event loop on big files
+  private chunks: Buffer[] = []
+  private receivedLength = 0
   private passThrough?: PassThrough
   private settled = false
   private resolveResult!: (result: DownloadResult) => void
@@ -133,7 +137,7 @@ export default class Download extends EventEmitter<DownloadEvents> implements Pr
 
   /** Bytes on disk once the transfer is over, the offset included */
   get receivedBytes (): number {
-    return this.offset + this.data.length
+    return this.offset + this.receivedLength
   }
 
   /**
@@ -236,7 +240,8 @@ export default class Download extends EventEmitter<DownloadEvents> implements Pr
     this.touch()
     this.setStatus('downloading')
 
-    this.data = Buffer.concat([this.data, chunk])
+    this.chunks.push(chunk)
+    this.receivedLength += chunk.length
     if (this.passThrough) this.passThrough.write(chunk)
     this.emit('data', chunk)
     this.emit('progress', this.progress())
@@ -250,11 +255,12 @@ export default class Download extends EventEmitter<DownloadEvents> implements Pr
     this.settled = true
 
     const path = this.destination
+    const data = Buffer.concat(this.chunks)
     try {
       await fs.promises.mkdir(dirname(path), { recursive: true })
       await (this.offset > 0
-        ? fs.promises.appendFile(path, this.data)
-        : fs.promises.writeFile(path, this.data))
+        ? fs.promises.appendFile(path, data)
+        : fs.promises.writeFile(path, data))
     } catch (err) {
       this.settled = false
       this.fail(err as Error)
@@ -267,7 +273,7 @@ export default class Download extends EventEmitter<DownloadEvents> implements Pr
 
     const result: DownloadResult = {
       path,
-      buffer: this.data,
+      buffer: data,
       receivedBytes: this.receivedBytes,
       size: this.size
     }
