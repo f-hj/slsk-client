@@ -87,7 +87,7 @@ Implemented in [`src/peer/default-peer/`](../src/peer/default-peer/).
 | 46 | UploadFailed (send) | string filename | Sent when a transfer we had announced cannot happen after all (provider error, connection lost) | ✅ |
 | 50 | UploadDenied (recv) | filename, reason | Handled — rejects the pending download promise with the peer's reason (or destroys the stream) and forgets the transfer tokens | ✅ |
 | 50 | UploadDenied (send) | filename, reason | `File not shared.`, `File read error.`, `Too many files`, or `Uploads are disabled` for a client that shares without serving. None of them is one of the internal statuses clients rewrite to 'Cancelled' | ✅ |
-| 51 | PlaceInQueueRequest (send) | string filename | Sent after QueueUpload to learn our position in the queue of the peer | ✅ |
+| 51 | PlaceInQueueRequest (send) | string filename | Sent after QueueUpload to learn our position in the queue of the peer, then again every `queuePollInterval` (60 s) while the file waits, as nicotine does every 5 min. A peer that answered before and then leaves `queuePollRetries` (3) of them unanswered no longer has the file queued, so the download fails instead of waiting forever | ✅ |
 | 51 | PlaceInQueueRequest (recv) | string filename | Answered with PlaceInQueueResponse (44) when the file is waiting in our queue, ignored when it is not. Log only when uploads are off, since nothing can be queued then | ✅ |
 | 8, 10, 14, 33, 34, 42, 47–49, 52 | Obsolete/deprecated messages | — | Not implemented | ⚪ |
 
@@ -143,7 +143,9 @@ The client joins the distributed network as documented (HaveNoParent → NetInfo
 ### 6.5 Download — ✅ compliant with the *modern* flow, legacy fallback
 The flow is the modern one: QueueUpload(43) → PlaceInQueueRequest(51) → the peer answers with its own TransferRequest(dir 1) → TransferResponse(allowed) → F connection.
 
-Nothing in the protocol says whether a peer understands QueueUpload, and a peer that does not simply answers nothing, so a download that got no answer at all after `queueFallbackDelay` (10 s) is asked again with the legacy TransferRequest(40, dir 0). The verdict is remembered per peer connection, so only the first download from such a peer waits. A peer that answers PlaceInQueueResponse(44), QueueFailed(46) or UploadDenied(50) is known to speak the queue flow and never gets the legacy request. Silence only counts when the connection is still up: a request that never left the buffer of a socket says nothing about the peer, so the download fails instead and the peer keeps its verdict.
+Nothing in the protocol says whether a peer understands QueueUpload, and a peer that does not simply answers nothing, so a download that got no answer at all after `queueFallbackDelay` (5 min) is asked again with the legacy TransferRequest(40, dir 0). The verdict is remembered per peer connection, so only the first download from such a peer waits — which is why the wait is long: a peer that answers a place request a minute later is a peer we must not remember as one that never understood the queue. A peer that answers PlaceInQueueResponse(44), QueueFailed(46) or UploadDenied(50) is known to speak the queue flow and never gets the legacy request.
+
+Silence only counts when the connection is still up: a request that never left the buffer of a socket says nothing about the peer, so its verdict is left untouched — and the download is **not** settled. A queued file survives the peer connection dropping, since the peer keeps the request on its side and announces the transfer when our turn comes, on whatever connection exists then. Giving up is left to `downloadTimeout`, `DownloadOptions.timeout` and the caller.
 
 A refusal of the legacy request is now acted upon: TransferResponse(allowed=0) with 'Queued' marks the download queued and asks for its place, any other reason ('Queue full', 'File not shared', 'Banned'...) fails it, where it used to be logged and forgotten — leaving the download pending forever.
 

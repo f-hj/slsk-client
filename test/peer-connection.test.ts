@@ -167,10 +167,20 @@ describe('download on a connection that dies', () => {
     deafPeer.close()
   })
 
-  it('fails the download instead of taking the peer for one that ignores the queue', async () => {
+  it('keeps the download queued, without taking the peer for one that ignores the queue', async () => {
     const download = client.download({ user: peerName, file: remoteFile, size: 10 })
+    const settled = download.promise.then(() => 'complete').catch((err: Error) => err.message)
 
-    await assert.rejects(download.promise, /Lost the connection to ghost/)
+    // the fallback delay has passed twice over: silence on a connection that died says nothing
+    await new Promise<void>(resolve => setTimeout(resolve, 500))
+
     assert.strictEqual(received.length, 1, 'the peer received the request before hanging up')
+    assert.strictEqual(download.status, 'requested', 'the file waits in the queue of the peer')
+    assert.strictEqual(download.isSettled, false,
+      'a lost connection is not the peer refusing the file: it announces the transfer later')
+
+    // the caller is the one that gives up
+    download.cancel('not waiting')
+    assert.match(await settled, /not waiting/)
   }).timeout(5000)
 })

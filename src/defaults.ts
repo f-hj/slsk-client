@@ -24,8 +24,16 @@ export const DEFAULT_UPLOAD_SLOTS = 1
 export const DEFAULT_QUEUE_LIMIT = 100
 /** How many distributed search requests are remembered to drop the duplicates */
 export const MAX_SEEN_SEARCHES = 5000
-/** ms to wait for any sign that a peer understands the upload queue before asking the old way */
-export const DEFAULT_QUEUE_FALLBACK_DELAY = 10000
+/**
+ * ms to wait for any sign that a peer understands the upload queue before asking the old way.
+ * Long on purpose: a peer answers a place request when it gets to it, and taking a slow one for
+ * a client that never understood QueueUpload is remembered for every later download from it.
+ */
+export const DEFAULT_QUEUE_FALLBACK_DELAY = 300000
+/** ms between two PlaceInQueueRequest of a download waiting in the queue of a peer */
+export const DEFAULT_QUEUE_POLL_INTERVAL = 60000
+/** How many place requests a peer that used to answer them may leave unanswered */
+export const DEFAULT_QUEUE_POLL_RETRIES = 3
 /** ms before the first attempt at reconnecting to the slsk server */
 export const DEFAULT_RECONNECT_DELAY = 1000
 /** Longest ms between two reconnection attempts, the delay doubles until it */

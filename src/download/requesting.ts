@@ -4,6 +4,8 @@ import DefaultPeer from '../peer/default-peer/default-peer'
 import FilePeer from '../peer/file-peer/file-peer'
 import {
   DEFAULT_QUEUE_FALLBACK_DELAY,
+  DEFAULT_QUEUE_POLL_INTERVAL,
+  DEFAULT_QUEUE_POLL_RETRIES,
   DOWNLOAD_RETRIES,
   RESUME_DELAY,
   TRANSFER_ACCEPT_DELAY
@@ -14,11 +16,21 @@ import type { DownloadOptions } from '../types'
 
 const debug = createDebug('slsk:download:request')
 
+/** What is known about the place of one download in the queue of its peer */
+interface QueuePoll {
+  /** Requests left unanswered since the last place the peer gave */
+  unanswered: number
+  timer?: NodeJS.Timeout
+}
+
 /**
  * The side of the client that asks for files: how a peer is asked, how a transfer it announces is
  * accepted, and what happens to a download that stops early or is never answered.
  */
 export default class Requesting {
+  /** Downloads whose place is being followed, by download */
+  private readonly polls = new Map<Download, QueuePoll>()
+
   constructor (private readonly ctx: ClientContext) {}
 
   /**
@@ -39,6 +51,9 @@ export default class Requesting {
       timeout: options.timeout ?? this.ctx.options.downloadTimeout,
       signal: options.signal
     })
+
+    download.once('complete', () => this.stopPolling(download))
+    download.once('failed', () => this.stopPolling(download))
 
     download.on('progress', progress => this.ctx.emit('download-progress', progress))
     download.on('queue', place => this.ctx.emit('download-queue', { user, file, place }))
@@ -129,11 +144,16 @@ export default class Requesting {
       // anything the peer answers changes the status, silence leaves it untouched
       if (download.status !== 'requested' || peer.supportsQueue === true) return
 
-      // silence on a connection that is gone says nothing about what the peer understands, and
-      // remembering it as a peer to never ask the modern way again would be wrong
+      /*
+       * Silence on a connection that is gone says nothing about what the peer understands, so it
+       * is not remembered as a peer to never ask the modern way again. The file stays queued
+       * either way: the peer keeps our request on its side and announces the transfer when our
+       * turn comes, on whatever connection exists then, minutes or hours later. Giving up is the
+       * business of `downloadTimeout` and of the caller.
+       */
       if (!peer.connected) {
-        debug(`${peer.label} never answered about its queue, its connection is gone`)
-        download.fail(new Error(`Lost the connection to ${peer.user}`))
+        debug(`${peer.label} never answered about its queue and its connection is gone, ` +
+          `${download.file} stays queued`)
         return
       }
 
@@ -228,7 +248,78 @@ export default class Requesting {
 
   /** The peer told us where the file it is sending stands in its queue */
   queued (user: string, file: string, place: number): void {
-    this.ctx.session.downloads.get(user, file)?.queued(place)
+    const download = this.ctx.session.downloads.get(user, file)
+    if (!download) return
+
+    download.queued(place)
+
+    // it answered, so it speaks the queue flow and holds our file: follow the place from here
+    const poll = this.polls.get(download) ?? { unanswered: 0 }
+    poll.unanswered = 0
+    this.polls.set(download, poll)
+    this.schedulePlaceRequest(download)
+  }
+
+  /**
+   * Asks again, later, where a queued download stands. A peer answers a place request when it
+   * gets to it, so the answers are what tells a caller the queue is moving — and the silence of a
+   * peer that used to answer is what tells us the file is not in its queue anymore.
+   */
+  private schedulePlaceRequest (download: Download): void {
+    const interval = this.ctx.options.queuePollInterval ?? DEFAULT_QUEUE_POLL_INTERVAL
+    if (interval <= 0) return
+
+    const poll = this.polls.get(download)
+    if (!poll) return
+
+    if (poll.timer) clearTimeout(poll.timer)
+    poll.timer = setTimeout(() => this.askPlace(download), interval)
+    // a download waiting for its turn must not keep the process alive
+    poll.timer.unref()
+  }
+
+  private askPlace (download: Download): void {
+    if (download.isSettled || !this.polls.has(download)) {
+      this.stopPolling(download)
+      return
+    }
+
+    // the transfer is on its way, nothing left to ask about
+    if (download.status !== 'queued' && download.status !== 'requested') {
+      this.stopPolling(download)
+      return
+    }
+
+    const peer = this.ctx.peers.peerConnection(download.user)
+    if (!peer?.connected) {
+      // a connection that is gone says nothing about our place: the file stays queued, and the
+      // peer announces the transfer on whatever connection exists when our turn comes
+      debug(`no connection to ${download.user} to ask about ${download.file}, waiting`)
+      this.stopPolling(download)
+      return
+    }
+
+    const retries = this.ctx.options.queuePollRetries ?? DEFAULT_QUEUE_POLL_RETRIES
+    const poll = this.polls.get(download) as QueuePoll
+    if (poll.unanswered >= retries) {
+      this.stopPolling(download)
+      download.fail(new Error(
+        `${download.user} left ${retries} ${retries === 1 ? 'request' : 'requests'} about the` +
+        ` place of ${download.file} unanswered, it is no longer queued`
+      ))
+      return
+    }
+
+    poll.unanswered++
+    peer.placeInQueueRequest(download.file)
+    this.schedulePlaceRequest(download)
+  }
+
+  private stopPolling (download: Download): void {
+    const poll = this.polls.get(download)
+    if (!poll) return
+    if (poll.timer) clearTimeout(poll.timer)
+    this.polls.delete(download)
   }
 
   /** The transfer will not happen: the peer said so, or its connection did */

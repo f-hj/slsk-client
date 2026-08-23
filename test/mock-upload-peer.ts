@@ -21,6 +21,11 @@ export interface MockUploadPeerOptions {
   /** Place in queue answered to PlaceInQueueRequest (default: 2) */
   place?: number
   /**
+   * How many place requests are answered before the peer goes quiet about them, like one that
+   * dropped the file from its queue (default: every one of them).
+   */
+  answerPlaces?: number
+  /**
    * How a download request (TransferRequest direction 0) is answered:
    * - `queued` as current clients do: TransferResponse('Queued'), then its own TransferRequest
    *   (direction 1) once the file is dequeued
@@ -34,6 +39,13 @@ export interface MockUploadPeerOptions {
    * Applies to the first attempt only, the next one sends everything asked for.
    */
   cutAfter?: number
+  /**
+   * Hangs up on a QueueUpload instead of announcing the transfer, like a peer whose connection
+   * dies while the file waits in its queue. `comeBack()` then plays its return.
+   */
+  dropAfterQueue?: boolean
+  /** Keeps the file queued without ever announcing the transfer, like a peer with a long queue */
+  holdInQueue?: boolean
 }
 
 export interface MockUploadPeerEvents {
@@ -56,6 +68,8 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
   private readonly sockets: net.Socket[] = []
   /** true once the first transfer has been cut short, so the next one goes through */
   private cut = false
+  /** How many place requests were received, to stop answering them after `answerPlaces` */
+  private placesAsked = 0
 
   constructor (options: MockUploadPeerOptions) {
     super()
@@ -157,6 +171,15 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
           const file = msg.str()
           debug(`recv QueueUpload ${file}`)
           this.emit('queue-upload', file)
+          if (this.options.dropAfterQueue) {
+            debug('queued, and dropping the connection without answering')
+            c.destroy()
+            break
+          }
+          if (this.options.holdInQueue) {
+            debug(`${file} stays in the queue, no transfer is announced`)
+            break
+          }
           if (this.options.answer === 'allow') {
             // a client from before the upload queue does not know this message
             debug('ignoring QueueUpload, this peer knows nothing about a queue')
@@ -177,9 +200,14 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
         case 51: {
           const file = msg.str()
           debug(`recv PlaceInQueueRequest ${file}`)
+          this.placesAsked++
           this.emit('place-in-queue-request', file)
           if (this.options.answer === 'allow') {
             debug('ignoring PlaceInQueueRequest, this peer knows nothing about a queue')
+            break
+          }
+          if (this.options.answerPlaces !== undefined && this.placesAsked > this.options.answerPlaces) {
+            debug(`answering nothing about the place of ${file} anymore`)
             break
           }
           c.write(new Message()
@@ -262,6 +290,29 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
   private handleFileConnection (c: net.Socket, rest: Buffer): void {
     this.waitForOffset(c)
     if (rest.length > 0) c.emit('data', rest)
+  }
+
+  /**
+   * Comes back on a new peer connection, as a peer does when our turn in its queue arrives, and
+   * announces the transfer of the file it had queued.
+   */
+  comeBack (): void {
+    const conn = net.createConnection({
+      host: '127.0.0.1',
+      port: this.options.clientListenPort
+    }, () => {
+      conn.write(new Message()
+        .int8(1) // PeerInit
+        .str(this.options.username)
+        .str('P')
+        .rawHexStr('00000000')
+        .getBuff())
+      this.announceTransfer(conn)
+    })
+
+    conn.on('error', (err: NodeJS.ErrnoException) => debug(`peer socket error ${err.code}`))
+    this.sockets.push(conn)
+    this.handlePeerConnection(conn, Buffer.alloc(0))
   }
 
   destroy (): void {

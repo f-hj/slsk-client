@@ -85,7 +85,9 @@ const client = new SlskClient({ shares: fsShareProvider({ folders: ['/home/me/mu
 |userInfo|What is answered to a peer asking for our info: `description`, `picture`, `uploadSlots`, `queueSize`, `slotsFree`, `uploadPermitted`|no description, and the slots, queue and permission of the `uploads` option as they stand|Only the keys you set are overridden, so a peer is told the truth about the slots unless you say otherwise|
 |reconnect|`false`, or `{ retries?, delay?, maxDelay? }`, to log in again when the server connection drops|`{ retries: Infinity, delay: 1000, maxDelay: 60000 }`|the delay doubles after every failed attempt, up to `maxDelay`|
 |downloadTimeout|ms without any progress after which a download fails|none|a queued file can legitimately wait for hours, so there is no timeout unless you set one|
-|queueFallbackDelay|ms to wait for a sign that a peer understands `QueueUpload` before asking it the old way|10000|rarely worth changing, it only delays downloads from peers old enough to ignore the queue messages|
+|queuePollInterval|ms between two requests for the place of a download waiting in the queue of a peer|60000|every answer is reported as a `download-queue` event, so a position that moves can be shown. `0` asks only once|
+|queuePollRetries|How many of those requests a peer that used to answer them may leave unanswered before the download fails|3|a peer answers nothing about a file it no longer has queued, so repeated silence means the transfer is gone|
+|queueFallbackDelay|ms to wait for a sign that a peer understands `QueueUpload` before asking it the old way|300000|long on purpose: a busy peer answers a place request when it gets to it, and taking it for a client that never understood the queue is remembered for every later download from it. A peer that says nothing on a connection that died keeps the file queued either way|
 
 #### login(user, pass): Promise\<void\>
 
@@ -351,7 +353,7 @@ Closes the connection to the server, the incoming-peer listener and every peer c
 |`found`|`SearchResult`|any search result|
 |`found:{req}`|`SearchResult`|result of a specific request|
 |`download-progress`|`{ user, file, receivedBytes, totalBytes?, sizeAnnounced, progress? }`|progress of a running download. `sizeAnnounced` is false while `totalBytes` is only the size the search result announced|
-|`download-queue`|`{ user, file, place }`|our place in the upload queue of the peer|
+|`download-queue`|`{ user, file, place }`|our place in the upload queue of the peer, reported again on every `queuePollInterval` as long as the peer answers|
 |`download-interrupted`|`{ user, file, receivedBytes, size?, attempts }`|a transfer stopped early and is being asked for again from there|
 |`upload-queued`|`{ user, file, place }`|a peer asked for one of our files, `place` is where it waits (0 when it starts right away)|
 |`upload-progress`|`{ user, file, sentBytes, totalBytes, progress }`|progress of a file being sent|

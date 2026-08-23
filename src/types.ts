@@ -97,6 +97,18 @@ export interface SlskClientOptions {
    */
   downloadTimeout?: number
   /**
+   * ms between two requests for the place of a download waiting in the queue of a peer
+   * (default: 60000, `0` to ask only once). Every answer is reported as a `download-queue` event,
+   * so a caller can show a position that moves.
+   */
+  queuePollInterval?: number
+  /**
+   * How many of those requests a peer that used to answer them may leave unanswered before the
+   * download fails (default: 3). A peer answers nothing about a file it no longer has queued, so
+   * repeated silence from a peer that used to answer means the transfer is gone.
+   */
+  queuePollRetries?: number
+  /**
    * ms to wait for any sign that a peer understands the upload queue (QueueUpload 43) before
    * asking it for the file the way clients did before the queue existed (default: 10000).
    * Rarely worth changing: it only delays the downloads from peers old enough to ignore the
