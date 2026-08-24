@@ -3,6 +3,7 @@ import net from 'net'
 import createDebug from 'debug'
 import Messages from '../src/utils/messages'
 import Message from '../src/utils/message'
+import peerMessages from '../src/peer/messages'
 import { parseUserInfo } from '../src/peer/default-peer/messages'
 import type { ServerAddress, UserInfo } from '../src/types'
 
@@ -131,6 +132,24 @@ export default class MockDownloadPeer extends EventEmitter<MockDownloadPeerEvent
       conn.write(new Message().int8(0).rawHexStr(token).getBuff())
     })
     conn.on('error', (err: NodeJS.ErrnoException) => debug(`pierced socket error ${err.code}`))
+    this.sockets.push(conn)
+    this.readFile(conn, Buffer.alloc(0))
+  }
+
+  /**
+   * Opens the file connection ourselves instead of waiting for the client to, introducing it with
+   * a PeerInit that carries the token of the transfer: what a downloader does when it accepted a
+   * transfer and would rather not be dialled for it.
+   */
+  openFileConnection (token: string): void {
+    debug(`open the file connection of ${token} to the client`)
+    const conn = net.createConnection({
+      host: '127.0.0.1',
+      port: this.options.clientListenPort
+    }, () => {
+      conn.write(peerMessages.peerInit(this.options.username, 'F', token).getBuff())
+    })
+    conn.on('error', (err: NodeJS.ErrnoException) => debug(`file socket error ${err.code}`))
     this.sockets.push(conn)
     this.readFile(conn, Buffer.alloc(0))
   }

@@ -121,6 +121,36 @@ describe('class DefaultPeer', () => {
     assert.deepStrictEqual(await place, { file, place: 7 })
   })
 
+  /*
+   * The bytes of a PlaceInQueueResponse a real peer sent, laid out by hand instead of with our
+   * own writer: a test that encodes with the code it checks would pass just as happily on the
+   * wrong endianness, the wrong offset or a place read as a signed int.
+   */
+  it('reads a place a peer really sent, byte for byte', async () => {
+    const queued = '@@rsuox\\#Album\\Mehldau, Brad_2010_Highway Rider\\Brad Mehldau_Highway Rider_101.flac'
+    const name = Buffer.from(queued, 'utf8')
+    assert.strictEqual(name.length, 83, 'the path of the log line is 83 bytes')
+
+    const payload = Buffer.alloc(4 + 4 + name.length + 4)
+    payload.writeUInt32LE(44, 0) // PlaceInQueueResponse
+    payload.writeUInt32LE(name.length, 4)
+    name.copy(payload, 8)
+    payload.writeUInt32LE(6079, 8 + name.length)
+
+    const framed = Buffer.alloc(4 + payload.length)
+    framed.writeUInt32LE(payload.length, 0)
+    payload.copy(framed, 4)
+    // the size the peer announced, which only adds up if every field is where we read it
+    assert.strictEqual(payload.length, 95)
+
+    const place = new Promise<{ file: string, place: number }>(resolve => {
+      peer.once('place-in-queue', resolve)
+    })
+    pair.remote.write(framed)
+
+    assert.deepStrictEqual(await place, { file: queued, place: 6079 })
+  })
+
   it('reports an announced upload and keeps its 64 bit size', async () => {
     const size = 6 * 1024 * 1024 * 1024 // 6 GiB, does not fit in a uint32
     const request = new Promise<TransferRequestEvent>(resolve => {

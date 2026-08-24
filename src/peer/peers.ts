@@ -6,6 +6,7 @@ import DistributedPeer from './distributed-peer/distributed-peer'
 import FilePeer from './file-peer/file-peer'
 import Listen from '../listen'
 import waitFor from '../utils/wait-for'
+import dial from '../utils/dial'
 import { PEER_TIMEOUT } from '../defaults'
 import type { ClientContext } from '../context'
 import type { PeerInfo } from '../types'
@@ -50,6 +51,52 @@ export default class Peers {
   private listen?: Listen
 
   constructor (private readonly ctx: ClientContext) {}
+
+  /**
+   * Peers whose listening port did not answer. A firewalled peer reaches us and never accepts a
+   * connection of its own: dialling it again for every file only makes every transfer wait for a
+   * dial that cannot come up, when the relayed route is the one that works for it.
+   */
+  private readonly cannotAccept = new Set<string>()
+
+  /** false for a peer whose port did not answer the last time we dialled it */
+  canBeDialled (user: string): boolean {
+    return !this.cannotAccept.has(user)
+  }
+
+  /** Remembers whether the port of a peer answered, whatever the dial was for */
+  dialled (user: string, reached: boolean): void {
+    if (reached) {
+      if (this.cannotAccept.delete(user)) debug(`${user} answers on its port again`)
+      return
+    }
+    if (!this.cannotAccept.has(user)) {
+      debug(`${user} does not answer on its port, the server will relay from now on`)
+    }
+    this.cannotAccept.add(user)
+  }
+
+  /** Dials that peer again next time, for when the relayed route does not work either */
+  dialAgain (user: string): void {
+    if (this.cannotAccept.delete(user)) debug(`${user} will be dialled again, the relay failed too`)
+  }
+
+  /** Dials a peer and remembers whether its port answered */
+  private dialPeer (user: string, host: string, port: number): net.Socket {
+    const socket = dial(host, port)
+
+    let up = false
+    socket.once('connect', () => {
+      up = true
+      this.dialled(user, true)
+    })
+    // close always comes, whether the dial failed, timed out or the connection lived and ended
+    socket.once('close', () => {
+      if (!up) this.dialled(user, false)
+    })
+
+    return socket
+  }
 
   /** true once the client accepts incoming peer connections */
   get listening (): boolean {
@@ -132,6 +179,20 @@ export default class Peers {
         this.dropSelfConnection(evt.socket, evt.user)
         return
       }
+      /*
+       * A file connection is opened by whoever needs it, so an incoming one runs in either
+       * direction. FileTransferInit is always sent by the uploader: a peer sending us a file
+       * announces its token on it, while a peer ready to receive one of ours waits for us to
+       * announce ours — and would wait forever if we read its init as a download.
+       * What tells them apart is the token of the PeerInit, when a peer puts one there.
+       */
+      const upload = this.ctx.session.uploads.byTransferToken(evt.token)
+      if (upload) {
+        debug(`${inLabel(evt.user, evt.socket)} opened the file connection for ${upload.file}`)
+        this.ctx.serving.sendOn(evt.socket, upload, evt.initialData)
+        return
+      }
+
       debug(`${inLabel(evt.user, evt.socket)} incoming file transfer`)
       new FilePeer(evt.socket, { user: evt.user, type: 'F' }, {
         session: this.ctx.session,
@@ -197,25 +258,9 @@ export default class Peers {
     if (this.peers[peer.user]) return
 
     this.peers[peer.user] = this.createDefaultPeer(
-      this.dialPeer(peer.host as string, peer.port as number),
+      this.dialPeer(peer.user, peer.host as string, peer.port as number),
       peer
     )
-  }
-
-  /**
-   * Dials a peer, giving up after `PEER_TIMEOUT`: the system takes minutes to declare an address
-   * that drops our packets unreachable, and a download waiting on it looks like a silent peer.
-   */
-  private dialPeer (host: string, port: number): net.Socket {
-    const socket = net.createConnection({ host, port })
-
-    socket.setTimeout(PEER_TIMEOUT, () => {
-      socket.destroy(new Error(`Connection to ${host}:${port} timed out`))
-    })
-    // an established connection may stay quiet for as long as the peer has nothing to say
-    socket.once('connect', () => socket.setTimeout(0))
-
-    return socket
   }
 
   /** A peer asked the server to have us connect to it, because it cannot accept a connection */
@@ -263,7 +308,7 @@ export default class Peers {
         }
 
         this.peers[peer.user] = this.createDefaultPeer(
-          this.dialPeer(peer.host as string, peer.port as number),
+          this.dialPeer(peer.user, peer.host as string, peer.port as number),
           peer
         )
       }
@@ -332,7 +377,7 @@ export default class Peers {
   /** A connection to a distributed parent: the searches of the network reach us on it */
   private createDistributedPeer (peer: PeerInfo): DistributedPeer {
     const distributedPeer = new DistributedPeer(
-      this.dialPeer(peer.host as string, peer.port as number),
+      this.dialPeer(peer.user, peer.host as string, peer.port as number),
       peer,
       { session: this.ctx.session }
     )

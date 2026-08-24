@@ -1,7 +1,9 @@
 import net from 'net'
 import createDebug from 'debug'
 import Peer, { type PeerOptions } from '../peer'
+import dial from '../../utils/dial'
 import fileMessages, { OFFSET_SIZE } from './messages'
+import { TRANSFER_START_TIMEOUT } from '../../defaults'
 import type { Readable } from 'stream'
 import type Upload from '../../upload/upload'
 import type { PeerInfo } from '../../types'
@@ -23,6 +25,8 @@ export interface UploadPeerOptions extends PeerOptions {
   initialData?: Buffer
   /** ms of silence before the connection is dropped (default: 60000) */
   transferTimeout?: number
+  /** ms the downloader is given to ask where to start (default: `TRANSFER_START_TIMEOUT`) */
+  startTimeout?: number
 }
 
 export interface OpenUploadPeerOptions extends PeerOptions {
@@ -30,6 +34,7 @@ export interface OpenUploadPeerOptions extends PeerOptions {
   port: number
   upload: Upload
   transferTimeout?: number
+  startTimeout?: number
 }
 
 /**
@@ -46,10 +51,14 @@ export default class UploadPeer extends Peer {
   private stream?: Readable
   /** true once the connection came up: a socket that never did is not a failed transfer yet */
   private established = false
+  /** Gives up on a downloader that never asks where to start, instead of holding the slot */
+  private waitingForOffset?: NodeJS.Timeout
+  private readonly startTimeout: number
 
   constructor (socket: net.Socket, peer: PeerInfo, options: UploadPeerOptions) {
     super(socket, peer, options)
     this.upload = options.upload
+    this.startTimeout = options.startTimeout ?? TRANSFER_START_TIMEOUT
 
     if (options.handshake === 'init') {
       this.conn.once('connect', () => {
@@ -79,6 +88,7 @@ export default class UploadPeer extends Peer {
 
     this.conn.on('close', () => {
       debug(`${this.label} file connection closed`)
+      clearTimeout(this.waitingForOffset)
       this.stream?.destroy()
       if (this.upload.isSettled) return
 
@@ -107,7 +117,7 @@ export default class UploadPeer extends Peer {
    */
   static open (options: OpenUploadPeerOptions): UploadPeer {
     debug(`${options.upload.user}[out:${options.port}] open file connection`)
-    const conn = net.createConnection({ host: options.host, port: options.port })
+    const conn = dial(options.host, options.port)
 
     return new UploadPeer(conn, {
       user: options.upload.user,
@@ -118,7 +128,8 @@ export default class UploadPeer extends Peer {
       session: options.session,
       upload: options.upload,
       handshake: 'init',
-      transferTimeout: options.transferTimeout
+      transferTimeout: options.transferTimeout,
+      startTimeout: options.startTimeout
     })
   }
 
@@ -131,6 +142,11 @@ export default class UploadPeer extends Peer {
     }
     debug(`${this.label} send FileTransferInit, token ${token}`)
     this.conn.write(fileMessages.token(token))
+
+    this.waitingForOffset = setTimeout(() => {
+      this.fail(new Error(`${this.user} never asked where to start ${this.upload.file}`))
+    }, this.startTimeout)
+    this.waitingForOffset.unref()
   }
 
   /** The only thing the downloader sends is the offset it wants to start at */
@@ -141,6 +157,7 @@ export default class UploadPeer extends Peer {
     if (this.pending.length < OFFSET_SIZE) return
 
     this.offsetRead = true
+    clearTimeout(this.waitingForOffset)
     const offset = fileMessages.parseOffset(this.pending)
     this.pending = Buffer.alloc(0)
     debug(`${this.label} recv FileOffset ${offset}`)

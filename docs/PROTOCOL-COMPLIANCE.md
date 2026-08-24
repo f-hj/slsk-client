@@ -109,6 +109,8 @@ Implemented in [`src/peer/distributed-peer/`](../src/peer/distributed-peer/).
 
 Documented sequence: connect → PeerInit(token 0)/PierceFireWall → downloader sends `uint32 token` → downloader sends `uint64 offset` → uploader streams → **downloader closes** when complete.
 
+Whichever side opens the connection, the uploader is the one that announces the transfer on it: the four routes (we dial to download, we dial to upload, the peer opens it to send us a file, the peer opens it to receive one) are all served.
+
 | Step | Doc | Implementation | Status |
 |------|-----|----------------|--------|
 | Outbound F after TransferResponse allowed | PeerInit with token 0, then uint32 transfer token | PeerInit carries the transfer token itself; the separate `uint32 token` message is **not** sent (legacy convention) | 🟡 works with legacy uploaders |
@@ -117,6 +119,7 @@ Documented sequence: connect → PeerInit(token 0)/PierceFireWall → downloader
 | Data & completion | Downloader closes at expected size | Buffers data (and feeds the optional stream), calls `conn.end()` once the expected size is received: the size the peer announced, or the one the search result reported when no message carried it (legacy flow). A transfer whose size is unknown ends when the uploader closes | ✅ |
 | Completion bookkeeping | — | File written to disk, promise resolved with path + buffer | ✅ (client-side concern) |
 | Outbound F to send a file | PeerInit(token 0), then the uint32 transfer token, read the uint64 offset, stream | Implemented as documented: PeerInit carries token 0, FileTransferInit carries the transfer token, the offset the downloader sends is honoured (`read({ start })`), and the bytes go out with backpressure. A peer we have no address for is asked through ConnectToPeer(type F) to open the connection itself | ✅ |
+| Inbound F to send a file | Same, on a connection the downloader opened | An incoming file connection runs in either direction, and FileTransferInit is always sent by the uploader: a PeerInit whose token matches a transfer we announced is a downloader ready to receive, so the transfer is announced on it and the offset it answers is honoured, instead of the connection being read as a download and waiting for a token that would never come. A second connection for a transfer that is already being sent is closed | ✅ |
 
 ## 6. Process-level compliance
 
@@ -165,6 +168,9 @@ Deviations and deliberate choices:
 - a legacy TransferRequest(dir 0) is **not** answered `allowed=1`, as the docs recommend: it is queued and refused with 'Queued', then announced with our own dir-1 request, so nothing but a transfer we announced can open a file connection
 - refusal reasons are the documented ones (`File not shared.`, `File read error.`, `Too many files`), none of which a client rewrites to 'Cancelled'
 - the file connection is opened towards the peer, at the address of the peer connection or the one GetPeerAddress(3) reports (a peer connection only ever carries the ephemeral port of the peer). Only when that fails, or when the server reports port 0, is ConnectToPeer(type F) used to have the peer open it instead — which needs our own listening port to be reachable, since the server hands the peer the address it has for us
+- that dial is given 10 s, not the two minutes the system takes to declare an address unreachable: a peer that accepted the transfer waits about a minute for the file connection, so the relayed route has to be tried while it is still waiting. One acceptance opens one connection, whatever the number of TransferResponses the peer sends for the same token
+- a port that did not answer is remembered per peer, so only the first transfer to a firewalled peer pays for finding out: the next ones ask for a relay straight away. The verdict is dropped when the relayed route fails too, and when the peer answers a dial again
+- the downloader then has 30 s to send the uint64 offset it wants to start at, since it holds the slot until it does and a peer that has given up on the file in the meantime never asks at all
 - a downloader that stops reading for `transferTimeout` ms loses the connection and the slot, and UploadFailed(46) is sent when a transfer we had announced cannot happen
 - privileged users get no priority in the queue, and there is no per-peer rate limit or ban list
 

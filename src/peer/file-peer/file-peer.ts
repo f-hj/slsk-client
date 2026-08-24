@@ -1,6 +1,7 @@
 import net from 'net'
 import createDebug from 'debug'
 import Peer, { type PeerOptions } from '../peer'
+import dial from '../../utils/dial'
 import fileMessages from './messages'
 import createFileTransferHandler from './handler'
 import type Download from '../../download/download'
@@ -126,7 +127,7 @@ export default class FilePeer extends Peer {
   /** Opens a file connection to a peer to download a file */
   static open (options: OpenFilePeerOptions): FilePeer {
     debug(`${options.user}[out:${options.port}] open file connection`)
-    const conn = net.createConnection({ host: options.host, port: options.port })
+    const conn = dial(options.host, options.port)
 
     const peer = new FilePeer(conn, {
       user: options.user,

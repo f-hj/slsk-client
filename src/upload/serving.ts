@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import type net from 'net'
 import createDebug from 'debug'
 import UploadPeer from '../peer/file-peer/upload-peer'
 import waitFor from '../utils/wait-for'
@@ -24,6 +25,9 @@ export interface UploadCapacity {
  * through, and the file connections the transfers run on.
  */
 export default class Serving {
+  /** Transfer tokens whose file connection is already being opened */
+  private readonly opening = new Set<string>()
+
   constructor (private readonly ctx: ClientContext) {}
 
   /**
@@ -144,9 +148,44 @@ export default class Serving {
       return
     }
 
+    /*
+     * One acceptance opens one file connection. A peer that answers twice — the same response on
+     * both of the connections it holds, or one repeated when it comes back — would otherwise get
+     * a second dial for the same token, and the two race to send the same file.
+     */
+    if (this.opening.has(evt.token)) {
+      debug(`${peer.label} accepted ${upload.file} again, its file connection is already opening`)
+      return
+    }
+    this.opening.add(evt.token)
+    upload.once('complete', () => this.opening.delete(evt.token))
+    upload.once('failed', () => this.opening.delete(evt.token))
+
     debug(`${peer.label} accepted ${upload.file}, opening the file connection`)
     this.start(peer, upload)
       .catch((err: Error) => upload.fail(err))
+  }
+
+  /**
+   * Sends the file on a connection the peer opened itself: the one it pierces our firewall with
+   * after a ConnectToPeer of ours, or one it opens with a PeerInit carrying the token of the
+   * transfer. Either way we are the uploader, so the transfer is announced on it and the offset
+   * the peer answers is honoured.
+   */
+  sendOn (socket: net.Socket, upload: Upload, initialData?: Buffer): void {
+    if (upload.status !== 'requested') {
+      // a connection is already sending this file, a second one would send it twice
+      debug(`${upload.user} opened another connection for ${upload.file}, already ${upload.status}`)
+      socket.destroy()
+      return
+    }
+
+    new UploadPeer(socket, { user: upload.user, type: 'F', token: upload.token }, {
+      session: this.ctx.session,
+      upload,
+      initialData,
+      transferTimeout: this.ctx.transferTimeout
+    })
   }
 
   /** Serves the queue when a slot frees, from a listener that cannot await it */
@@ -211,7 +250,15 @@ export default class Serving {
    * ephemeral port of the peer, never the one it listens on, so the address comes from the server.
    */
   private async start (peer: DefaultPeer, upload: Upload): Promise<void> {
-    const address = await this.addressOf(upload.user, peer)
+    /*
+     * A peer that reached us may well not accept a connection itself, and the one waiting for the
+     * file is the first to pay for finding out: it waits for a dial that cannot come up before
+     * the server is asked to relay one. So a port that did not answer is remembered, and every
+     * later transfer to that peer goes straight to the route that works.
+     */
+    const address = this.ctx.peers.canBeDialled(upload.user)
+      ? await this.addressOf(upload.user, peer)
+      : undefined
 
     if (address) {
       const connection = UploadPeer.open({
@@ -224,11 +271,15 @@ export default class Serving {
 
       try {
         await connection.ready
+        this.ctx.peers.dialled(upload.user, true)
         return
       } catch (err) {
+        this.ctx.peers.dialled(upload.user, false)
         debug(`${connection.label} cannot be opened: ${String(err)}`)
         connection.destroy()
       }
+    } else if (!this.ctx.peers.canBeDialled(upload.user)) {
+      debug(`${peer.label} does not accept connections, going straight to the relayed route`)
     }
 
     if (upload.isSettled) return
@@ -276,6 +327,8 @@ export default class Serving {
 
     const gaveUp = setTimeout(() => {
       if (!this.ctx.peers.forgetPierce(token)) return
+      // neither route worked: the next transfer to that peer tries its port again
+      this.ctx.peers.dialAgain(upload.user)
       upload.fail(new Error(
         `${upload.user} never opened the file connection, and it could not be reached directly` +
         ` either: our listening port ${this.ctx.incomingPort} may not be reachable`
@@ -285,12 +338,7 @@ export default class Serving {
 
     this.ctx.peers.expectPierce(token, (socket, initialData) => {
       clearTimeout(gaveUp)
-      new UploadPeer(socket, { user: upload.user, type: 'F', token }, {
-        session: this.ctx.session,
-        upload,
-        initialData,
-        transferTimeout: this.ctx.transferTimeout
-      })
+      this.sendOn(socket, upload, initialData)
     })
     this.ctx.server.connectToPeer(token, upload.user, 'F')
   }

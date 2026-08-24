@@ -16,6 +16,12 @@ export const USER_INFO_TIMEOUT = 10000
 export const DOWNLOAD_RETRIES = 3
 /** ms before asking a peer for the rest of an interrupted transfer */
 export const RESUME_DELAY = 1000
+/**
+ * ms a downloader is given to ask where to start, once the transfer has been announced on the
+ * file connection. It holds the upload slot until it does, and a peer that has given up on the
+ * file in the meantime never asks at all.
+ */
+export const TRANSFER_START_TIMEOUT = 30000
 /** ms of silence on a file connection before the transfer is considered dead */
 export const DEFAULT_TRANSFER_TIMEOUT = 10 * 60 * 1000
 /** How many files are sent at the same time when nothing else is asked for */
