@@ -24,9 +24,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: npm ci
@@ -54,7 +53,7 @@ jobs:
             echo "Publishing ${PKG_NAME}@${VERSION} to npm..."
             if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
               echo "Using NPM_TOKEN from repository secrets."
-              export NODE_AUTH_TOKEN="${{ secrets.NPM_TOKEN }}"
+              npm config set //registry.npmjs.org/:_authToken "${{ secrets.NPM_TOKEN }}"
             else
               echo "Using npm Trusted Publishing (OIDC)."
             fi
