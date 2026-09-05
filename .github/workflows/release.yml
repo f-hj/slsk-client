@@ -10,10 +10,11 @@ on:
 
 jobs:
   release:
+    name: Publish to npm
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
+      id-token: write # required for npm provenance
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,8 +26,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: '@${{ github.repository_owner }}'
+          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: npm ci
@@ -37,32 +37,30 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Release to GitHub Packages
+      - name: Publish to npm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
           PKG_NAME=$(node -p "require('./package.json').name")
-          OWNER="${{ github.repository_owner }}"
-          EXPECTED_NAME="@${OWNER}/slsk-client"
-
-          if [ "$PKG_NAME" != "$EXPECTED_NAME" ] && [ -n "$OWNER" ]; then
-            echo "Adjusting package name to match repository owner: $EXPECTED_NAME"
-            npm pkg set name="$EXPECTED_NAME"
-            PKG_NAME="$EXPECTED_NAME"
-          fi
 
           echo "Package: $PKG_NAME"
           echo "Version: $VERSION"
 
-          # Check if this version is already published on GitHub Packages
-          if npm view "${PKG_NAME}@${VERSION}" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; then
-            echo "Version ${VERSION} of ${PKG_NAME} is already published on GitHub Packages. Skipping publish."
+          # Check if this version is already published on npm
+          if npm view "${PKG_NAME}@${VERSION}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "Version ${VERSION} of ${PKG_NAME} is already published on npm. Skipping publish."
           else
-            echo "Publishing ${PKG_NAME}@${VERSION} to GitHub Packages..."
-            npm publish --access public
-            echo "Successfully published ${PKG_NAME}@${VERSION} to GitHub Packages."
+            echo "Publishing ${PKG_NAME}@${VERSION} to npm..."
+            if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
+              echo "Using NPM_TOKEN from repository secrets."
+              export NODE_AUTH_TOKEN="${{ secrets.NPM_TOKEN }}"
+            else
+              echo "Using npm Trusted Publishing (OIDC)."
+            fi
+
+            npm publish --access public --provenance
+            echo "Successfully published ${PKG_NAME}@${VERSION} to npm."
 
             TAG="v${VERSION}"
             if ! gh release view "$TAG" >/dev/null 2>&1; then

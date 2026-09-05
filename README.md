@@ -18,23 +18,16 @@ A modern NodeJS client for the Soulseek peer-to-peer network, written in TypeScr
 
 ## Installation
 
-Install from GitHub Packages:
-
 ```sh
-npm install @f-hj/slsk-client
+npm install slsk-client
 ```
-
-> **Note**: To install packages from GitHub Packages, configure `@f-hj` in your `~/.npmrc` or project `.npmrc`:
-> ```ini
-> @f-hj:registry=https://npm.pkg.github.com
-> ```
 
 ## Getting Started
 
 You must already have a Soulseek account before using this module.
 
 ```ts
-import { SlskClient, FileAttribute } from '@f-hj/slsk-client'
+import { SlskClient, FileAttribute } from 'slsk-client'
 
 const client = new SlskClient()
 await client.login('myUsername', 'myPassword')
@@ -98,7 +91,7 @@ await client.download({ ...result, signal: AbortSignal.timeout(30000) })
 Files can be shared using built-in or custom share providers:
 
 ```ts
-import { SlskClient, fsShareProvider, memoryShareProvider } from '@f-hj/slsk-client'
+import { SlskClient, fsShareProvider, memoryShareProvider } from 'slsk-client'
 
 const client = new SlskClient({
   shares: [
