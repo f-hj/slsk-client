@@ -21,7 +21,7 @@
     "prepublishOnly": "npm run typecheck && npm run build"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "author": "Florian Hermouet-Joscht",
   "license": "MIT",
