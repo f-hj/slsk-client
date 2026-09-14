@@ -46,6 +46,10 @@ export interface MockUploadPeerOptions {
   dropAfterQueue?: boolean
   /** Keeps the file queued without ever announcing the transfer, like a peer with a long queue */
   holdInQueue?: boolean
+  /** ms the file data is held back after the offset, to keep the transfer in progress */
+  holdData?: number
+  /** Has the client connect instead of connecting to it, like a peer that cannot be reached */
+  relay?: boolean
 }
 
 export interface MockUploadPeerEvents {
@@ -56,6 +60,10 @@ export interface MockUploadPeerEvents {
   'transfer-response': [evt: { token: string, allowed: number }]
   /** File offset asked by the client, non zero when it resumes a download */
   offset: [offset: number]
+  /** Token the client pierced our firewall with */
+  pierce: [token: string]
+  /** Token the client has to pierce with, once the server relayed our request */
+  'relay-requested': [token: string]
 }
 
 /**
@@ -70,6 +78,8 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
   private cut = false
   /** How many place requests were received, to stop answering them after `answerPlaces` */
   private placesAsked = 0
+  /** Transfer token waiting for the client to pierce */
+  private relaying?: string
 
   constructor (options: MockUploadPeerOptions) {
     super()
@@ -109,6 +119,13 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
           this.handleFileConnection(c, rest)
           return
         }
+      } else if (code === 0) {
+        // the client connected back, as the server told it to for a transfer of ours
+        const token = msg.rawHexStr(4)
+        debug(`recv PierceFireWall, token ${token}`)
+        this.emit('pierce', token)
+        this.servePierced(c)
+        return
       } else {
         debug(`recv peer init code ${code}`)
       }
@@ -164,7 +181,16 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
           const allowed = msg.int8()
           debug(`recv TransferResponse ${token} allowed ${allowed}`)
           this.emit('transfer-response', { token, allowed })
-          if (allowed === 1) this.uploadTo(token)
+          if (allowed !== 1) break
+
+          if (this.options.relay) {
+            // a peer that cannot be reached asks the server to have the client connect
+            this.relaying = token
+            debug('asking the server to have the client open the connection')
+            this.emit('relay-requested', '69500001')
+            break
+          }
+          this.uploadTo(token)
           break
         }
         case 43: {
@@ -262,6 +288,16 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
     this.waitForOffset(conn)
   }
 
+  /** Announces the pending transfer on the connection the client pierced */
+  private servePierced (c: net.Socket): void {
+    if (this.relaying === undefined) return
+    const token = this.relaying
+    this.relaying = undefined
+    debug(`announcing the transfer of token ${token} on the pierced connection`)
+    c.write(Buffer.from(token, 'hex'))
+    this.waitForOffset(c)
+  }
+
   /** Reads the 8 bytes offset then sends the file data */
   private waitForOffset (conn: net.Socket): void {
     let buf = Buffer.alloc(0)
@@ -272,8 +308,17 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
       const offset = Number(buf.readBigUInt64LE(0))
       debug(`recv offset ${offset}`)
       this.emit('offset', offset)
+      this.sendFileFrom(conn, offset)
+    }
+    conn.on('data', onData)
+  }
 
-      const remaining = this.options.data.subarray(offset)
+  /** Sends what is left of the file, right away or once `holdData` has passed */
+  private sendFileFrom (conn: net.Socket, offset: number): void {
+    const remaining = this.options.data.subarray(offset)
+
+    const send = (): void => {
+      if (conn.destroyed) return
       if (this.options.cutAfter !== undefined && !this.cut) {
         // send a slice and hang up, like a peer that goes away mid transfer
         this.cut = true
@@ -283,7 +328,12 @@ export default class MockUploadPeer extends EventEmitter<MockUploadPeerEvents> {
       }
       conn.write(remaining)
     }
-    conn.on('data', onData)
+
+    if (this.options.holdData !== undefined) {
+      setTimeout(send, this.options.holdData)
+      return
+    }
+    send()
   }
 
   /** File connection the client opened itself (legacy flow) */
