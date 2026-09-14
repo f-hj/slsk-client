@@ -9,6 +9,7 @@ import waitFor from '../utils/wait-for'
 import dial from '../utils/dial'
 import { PEER_TIMEOUT } from '../defaults'
 import type { ClientContext } from '../context'
+import type Download from '../download/download'
 import type { PeerInfo } from '../types'
 
 const debug = createDebug('slsk:peers')
@@ -48,6 +49,8 @@ export default class Peers {
   private readonly pendingIndirect: Record<string, Pierced> = {}
   /** Users a `connectDirect` is waiting for the address of, the only ones worth dialling */
   private readonly awaitingAddress = new Set<string>()
+  /** File connections a peer opened to send us a file, by user */
+  private readonly incomingTransfers: Record<string, FilePeer> = {}
   private listen?: Listen
 
   constructor (private readonly ctx: ClientContext) {}
@@ -123,6 +126,16 @@ export default class Peers {
     return connections
   }
 
+  /** The download this user is already sending us on a connection it opened, if any */
+  private receivingFrom (user: string): { transfer: FilePeer, download: Download } | undefined {
+    const transfer = this.incomingTransfers[user]
+    if (transfer === undefined || !transfer.alive) return undefined
+
+    const download = transfer.download
+    if (download === undefined || download.isSettled) return undefined
+    return { transfer, download }
+  }
+
   /** Registers the connection a peer is about to open after a ConnectToPeer request */
   expectPierce (token: string, onPierced: Pierced): void {
     this.pendingIndirect[token] = onPierced
@@ -194,11 +207,17 @@ export default class Peers {
       }
 
       debug(`${inLabel(evt.user, evt.socket)} incoming file transfer`)
-      new FilePeer(evt.socket, { user: evt.user, type: 'F' }, {
+      const transfer = new FilePeer(evt.socket, { user: evt.user, type: 'F' }, {
         session: this.ctx.session,
         readToken: true,
         initialData: evt.initialData,
         transferTimeout: this.ctx.transferTimeout
+      })
+
+      // remembered until the connection closes
+      this.incomingTransfers[evt.user] = transfer
+      evt.socket.once('close', () => {
+        if (this.incomingTransfers[evt.user] === transfer) delete this.incomingTransfers[evt.user]
       })
     })
 
@@ -270,6 +289,16 @@ export default class Peers {
 
     switch (peer.type) {
       case 'F': {
+        // the file is already arriving on the connection the peer opened: the relayed
+        // request is only its fallback, and answering it can make the peer give up
+        const receiving = this.receivingFrom(peer.user)
+        if (receiving !== undefined) {
+          debug(`${outLabel(peer.user, peer.port)} is already sending ${receiving.download.file}` +
+            ` on ${receiving.transfer.label}, not opening a file connection for its request` +
+            ` (token ${peer.token})`)
+          break
+        }
+
         FilePeer.open({
           host: peer.host as string,
           port: peer.port as number,
